@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { amountText, dayLabel, deg, kst, sourceText, weatherWord, windText } from '$lib/format';
+	import { amountText, dayLabel, deg, kst, weatherWord, windText } from '$lib/format';
 	import type { Timeline } from '$lib/types';
 
 	let {
@@ -15,9 +15,7 @@
 	const title = $derived.by(() => {
 		if (!s) return '';
 		const p = kst(s.t);
-		const when = isNow ? `지금 ${p.h}시` : `${dayLabel(s.t, tl.now)} ${p.h}시${s.h === 3 ? `~${(p.h + 3) % 24 || 24}시` : ''}`;
-		const src = sourceText(s, tl.sources);
-		return src ? `${when} · ${src}` : when;
+		return isNow ? `지금 ${p.h}시` : `${dayLabel(s.t, tl.now)} ${p.h}시${s.h === 3 ? `~${(p.h + 3) % 24 || 24}시` : ''}`;
 	});
 
 	const word = $derived(s ? weatherWord(s) : '');
@@ -44,7 +42,7 @@
 		return `어제 같은 시각${est}보다 ${Math.abs(d)}° ${d > 0 ? '높음' : '낮음'}`;
 	});
 	const popText = $derived(
-		s?.pop != null ? `강수확률 ${s.pop}%${isNow || s.phase === 'past' ? ' (예보)' : ''}` : ''
+		s?.pop != null ? `강수확률 ${s.pop}%` : ''
 	);
 </script>
 

@@ -265,7 +265,7 @@
 			{@render pendingNote()}
 			<Daily {tl} onpick={pickDay} />
 		{/if}
-		<p class="foot">기상청 단기예보 조회서비스 · 시각은 한국 시간</p>
+		<p class="foot">기상청 단기예보 조회서비스</p>
 	</div>
 {/if}
 

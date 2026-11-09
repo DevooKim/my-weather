@@ -285,11 +285,8 @@
 		{/each}
 		<text x="4" y={yChart + 10} class="small" fill="var(--text-3)">{slots[0]?.estimated ? '추정' : '실측'}</text>
 		<text x={nowX + cw + 4} y={yChart + 10} class="small" fill="var(--accent-text)"
-			>예보{band && band.x === nowX ? ' · 1시간 간격' : ''}</text
+			>예보</text
 		>
-		{#if band && band.x + band.w < W}
-			<text x={band.x + band.w + 4} y={yChart + 10} class="small" fill="var(--text-3)">3시간 간격</text>
-		{/if}
 
 		<!-- 누르는 영역 -->
 		{#each cols as c (c.i)}

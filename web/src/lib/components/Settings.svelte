@@ -179,7 +179,6 @@
 			<div class="card pad info">
 				<span>데이터: {info?.data_source ?? '기상청 단기예보 조회서비스 (공공데이터포털)'}</span>
 				{#if lastLine}<span>마지막 수집: {lastLine}</span>{/if}
-				<span>시각은 모두 한국 시간이에요.</span>
 			</div>
 		</section>
 	</div>
