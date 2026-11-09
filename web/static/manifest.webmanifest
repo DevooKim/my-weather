@@ -1,0 +1,17 @@
+{
+	"name": "my-weather",
+	"short_name": "my-weather",
+	"description": "어제부터 예보 끝까지 한 줄로 보는 날씨",
+	"lang": "ko",
+	"start_url": "/",
+	"scope": "/",
+	"display": "standalone",
+	"orientation": "portrait",
+	"background_color": "#2B3440",
+	"theme_color": "#2B3440",
+	"icons": [
+		{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+		{ "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+		{ "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+	]
+}

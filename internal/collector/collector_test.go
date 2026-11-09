@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -617,3 +618,67 @@ func TestNoFallbackWhenPreviousStored(t *testing.T) {
 		}
 	}
 }
+
+// 실행 중에 즐겨찾기 격자가 들어오면 다음 Step에서 최신 발표분과 실황 백필(StartupBackfill개)을 받고,
+// 초단기 최신 발표분 저장 뒤 OnUltra가 격자·발표분마다 한 번 불린다. 빠지면 다음 작업부터 수집하지 않는다.
+func TestExtraGridsAndOnUltra(t *testing.T) {
+	e := newEnv(t, 10000)
+	e.now = at("2026-11-10 14:50")
+	var noted []string
+	c := New(e.db, e.api, e.bud, Options{
+		Grids: []config.Grid{gA}, StartupBackfill: 2, Log: quiet, Now: func() time.Time { return e.now },
+		OnUltra: func(nx, ny int, base int64) {
+			noted = append(noted, config.Grid{NX: nx, NY: ny}.String()+"@"+itoa(base))
+		},
+	})
+	c.Step(context.Background())
+	if len(noted) != 1 || noted[0] != "61,125@202611101430" {
+		t.Fatalf("noted %v", noted)
+	}
+	before := len(e.srv.Requests())
+	c.SetExtraGrids([][2]int{{gB.NX, gB.NY}, {gA.NX, gA.NY}})
+	if !c.IsCollected(gB.NX, gB.NY) || len(c.Grids()) != 2 {
+		t.Fatalf("grids %v", c.Grids())
+	}
+	c.Step(context.Background())
+	var ncstB, ultraB, vilB int
+	for _, r := range e.calls()[before:] {
+		if r.nx != gB.NX {
+			t.Fatalf("unexpected call %+v", r)
+		}
+		switch r.op {
+		case string(kma.OpNcst):
+			ncstB++
+		case string(kma.OpUltra):
+			ultraB++
+		case string(kma.OpVilage):
+			vilB++
+		}
+	}
+	if ncstB != 1+2 || ultraB != 1 || vilB != 1 {
+		t.Fatalf("new grid calls ncst=%d ultra=%d vilage=%d", ncstB, ultraB, vilB)
+	}
+	if len(noted) != 2 || noted[1] != "59,126@202611101430" {
+		t.Fatalf("noted %v", noted)
+	}
+	// 같은 발표분을 다시 저장할 일이 없고, 다시 Step해도 OnUltra는 다시 불리지 않음
+	c.Step(context.Background())
+	if len(noted) != 2 {
+		t.Fatalf("noted again %v", noted)
+	}
+	// 즐겨찾기에서 빠지면(설정 격자 gA는 남음) 다음 발표분부터 gB는 받지 않음
+	c.SetExtraGrids(nil)
+	if c.IsCollected(gB.NX, gB.NY) || !c.IsCollected(gA.NX, gA.NY) {
+		t.Fatal("remove grid")
+	}
+	e.now = at("2026-11-10 15:50")
+	before = len(e.srv.Requests())
+	c.Step(context.Background())
+	for _, r := range e.calls()[before:] {
+		if r.nx == gB.NX {
+			t.Fatalf("removed grid still collected %+v", r)
+		}
+	}
+}
+
+func itoa(v int64) string { return fmt.Sprint(v) }

@@ -1,12 +1,13 @@
 // Package config는 환경변수에서 설정을 읽는다.
 //
-// 수집기·HTTP API에서 쓰는 값만 둔다. RP ID·VAPID 등은 인증·푸시 단계에서 추가한다.
+// 수집기·HTTP API·인증·푸시 설정을 둔다.
 package config
 
 import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -35,14 +36,25 @@ type Config struct {
 	TrustedProxies   []netip.Prefix // MYWEATHER_TRUSTED_PROXIES: 쉼표로 구분한 CIDR (기본 127.0.0.0/8,::1/128)
 	OnDemandBackfill int            // MYWEATHER_ONDEMAND_BACKFILL_MAX: 즉시 조회 2단계 실황 백필 최대 시각 수(0~23)
 	OnDemandPast     int            // MYWEATHER_ONDEMAND_PAST_MAX: 즉시 조회 3단계 과거 단기 발표분 최대 개수(0~3)
+
+	// 인증 (비우면 인증 API는 503)
+	RPID   string // MYWEATHER_RP_ID: 패스키 RP ID (예: weather.example.com)
+	Origin string // MYWEATHER_ORIGIN: 화면 Origin. 기본 https://<RP_ID>. 상태 변경 요청의 Origin 검사에도 씀
+
+	// Web Push (키가 없으면 푸시 API는 503, 알림은 판정만 기록)
+	VAPIDFile    string // MYWEATHER_VAPID_FILE: VAPID_PUBLIC_KEY=·VAPID_PRIVATE_KEY= 줄이 있는 파일
+	VAPIDPublic  string // VAPID_PUBLIC_KEY (파일이 없을 때)
+	VAPIDPrivate string // VAPID_PRIVATE_KEY
+	VAPIDSubject string // VAPID_SUBJECT: 기본 mailto:khwoo8026@gmail.com
 }
 
 // 기본값
 const (
-	DefaultDBPath = "./var/myweather.sqlite3"
-	DefaultListen = "127.0.0.1:8080"
-	DefaultGrids  = "61,125;59,126" // 역삼1동, 서교동
-	DefaultIPHdr  = "X-Forwarded-For"
+	DefaultDBPath       = "./var/myweather.sqlite3"
+	DefaultListen       = "127.0.0.1:8080"
+	DefaultGrids        = "61,125;59,126" // 역삼1동, 서교동
+	DefaultIPHdr        = "X-Forwarded-For"
+	DefaultVAPIDSubject = "mailto:khwoo8026@gmail.com"
 )
 
 // Load는 getenv(nil이면 os.Getenv)로 설정을 읽는다. 키는 LoadKey로 따로 읽는다.
@@ -93,6 +105,9 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if len(c.TrustedProxies) == 0 {
 		return c, errors.New("MYWEATHER_TRUSTED_PROXIES: empty")
+	}
+	if err := c.loadAuthPush(get); err != nil {
+		return c, err
 	}
 	c.TrustedIPHeader = get("TRUSTED_IP_HEADER", DefaultIPHdr)
 	if strings.EqualFold(c.TrustedIPHeader, "none") {
@@ -162,4 +177,83 @@ func (c Config) LoadKey() (string, error) {
 		return v, nil
 	}
 	return "", fmt.Errorf("KMA key: api_key not found in %s", c.EnvFile)
+}
+
+func (c *Config) loadAuthPush(get func(k, def string) string) error {
+	c.RPID = strings.ToLower(get("MYWEATHER_RP_ID", ""))
+	c.Origin = strings.TrimRight(get("MYWEATHER_ORIGIN", ""), "/")
+	if c.RPID != "" {
+		if strings.ContainsAny(c.RPID, ":/ ") {
+			return fmt.Errorf("MYWEATHER_RP_ID: %q must be a bare host name", c.RPID)
+		}
+		if c.Origin == "" {
+			c.Origin = "https://" + c.RPID
+		}
+		u, err := url.Parse(c.Origin)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.Path != "" || u.RawQuery != "" {
+			return fmt.Errorf("MYWEATHER_ORIGIN: %q must be scheme://host[:port]", c.Origin)
+		}
+		h := strings.ToLower(u.Hostname())
+		if h != c.RPID && !strings.HasSuffix(h, "."+c.RPID) {
+			return fmt.Errorf("MYWEATHER_ORIGIN host %q is not RP ID %q or its subdomain", h, c.RPID)
+		}
+		if u.Scheme == "http" && h != "localhost" {
+			return fmt.Errorf("MYWEATHER_ORIGIN: http is allowed only for localhost")
+		}
+		c.Origin = strings.ToLower(c.Origin)
+	} else if c.Origin != "" {
+		return errors.New("MYWEATHER_ORIGIN is set but MYWEATHER_RP_ID is empty")
+	}
+
+	c.VAPIDSubject = get("VAPID_SUBJECT", DefaultVAPIDSubject)
+	c.VAPIDFile = get("MYWEATHER_VAPID_FILE", "")
+	if c.VAPIDFile != "" {
+		kv, err := ReadKV(c.VAPIDFile)
+		if err != nil {
+			return fmt.Errorf("MYWEATHER_VAPID_FILE: %w", err)
+		}
+		c.VAPIDPublic, c.VAPIDPrivate = kv["VAPID_PUBLIC_KEY"], kv["VAPID_PRIVATE_KEY"]
+		if c.VAPIDPublic == "" || c.VAPIDPrivate == "" {
+			return fmt.Errorf("MYWEATHER_VAPID_FILE %s: VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY lines required", c.VAPIDFile)
+		}
+		if v := kv["VAPID_SUBJECT"]; v != "" && get("VAPID_SUBJECT", "") == "" {
+			c.VAPIDSubject = v
+		}
+	} else {
+		c.VAPIDPublic, c.VAPIDPrivate = get("VAPID_PUBLIC_KEY", ""), get("VAPID_PRIVATE_KEY", "")
+		if (c.VAPIDPublic == "") != (c.VAPIDPrivate == "") {
+			return errors.New("VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY must be set together")
+		}
+	}
+	if !strings.HasPrefix(c.VAPIDSubject, "mailto:") && !strings.HasPrefix(c.VAPIDSubject, "https://") {
+		return fmt.Errorf("VAPID_SUBJECT: %q must start with mailto: or https://", c.VAPIDSubject)
+	}
+	return nil
+}
+
+// AuthEnabled는 패스키 인증 설정(RP ID)이 있는지다.
+func (c Config) AuthEnabled() bool { return c.RPID != "" }
+
+// PushEnabled는 VAPID 키가 있는지다.
+func (c Config) PushEnabled() bool { return c.VAPIDPublic != "" && c.VAPIDPrivate != "" }
+
+// ReadKV는 KEY=VALUE 줄로 된 파일을 읽는다(# 주석, 빈 줄, 따옴표 허용).
+func ReadKV(path string) (map[string]string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(strings.TrimRight(line, "\r"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		out[strings.TrimSpace(strings.TrimPrefix(k, "export "))] = strings.Trim(strings.TrimSpace(v), `"'`)
+	}
+	return out, nil
 }

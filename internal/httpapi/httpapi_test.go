@@ -221,8 +221,12 @@ func TestTimelineCollectedGridAndErrors(t *testing.T) {
 	if w := e.get("/api/timeline?region=1111051500", "203.0.113.9"); w.Code != 200 || decode(t, w)["place"].(map[string]any)["name"] != "청운효자동" {
 		t.Fatalf("region only: %d", w.Code)
 	}
-	if w := e.get("/nope", "203.0.113.9"); w.Code != 404 {
-		t.Fatal("404")
+	// /api/ 밖은 SPA(webui): 없는 경로는 index.html, 없는 정적 파일은 404
+	if w := e.get("/nope", "203.0.113.9"); w.Code != 200 || !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("spa fallback %d", w.Code)
+	}
+	if w := e.get("/nope.png", "203.0.113.9"); w.Code != 404 {
+		t.Fatal("static 404")
 	}
 	if w := e.get("/api/nope", "203.0.113.9"); w.Code != 404 || !strings.Contains(w.Body.String(), "not_found") {
 		t.Fatal("api 404")

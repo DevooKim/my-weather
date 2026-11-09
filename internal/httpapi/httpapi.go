@@ -1,12 +1,20 @@
-// Package httpapi는 공개 HTTP API다(설계 §2). 이번 단계는 인증 없이 읽기 전용 엔드포인트만 둔다.
+// Package httpapi는 HTTP API다(설계 §2).
 //
 //	GET /healthz          컨테이너 헬스체크 (DB SELECT 1)
-//	GET /api/health       운영 상태. 상세는 서버 안(loopback, 전달 헤더 없음)에서만, 그 밖에는 {"ok":true}
-//	GET /api/timeline     타임라인 (§3). 수집 대상이 아닌 격자는 즉시 조회(§5.6)
+//	GET /api/health       운영 상태. 상세는 서버 안(loopback, 전달 헤더 없음) 또는 관리자 세션에만, 그 밖에는 {"ok":true}
+//	GET /api/timeline     타임라인 (§3). 수집 대상이 아닌 격자는 즉시 조회(§5.6). ?fav=id는 관리자만
+//	GET /api/now          지금 날씨 묶음 (§2.2, KMA를 부르지 않음)
 //	GET /api/search       지역 검색 (§2.3, /api/regions도 같은 처리)
 //	GET /api/grid         위경도 → 격자 (§2.4)
+//	/api/auth/*           패스키 등록·로그인·로그아웃·상태·패스키 관리 (§2.8, admin.go)
+//	/api/favorites*       즐겨찾기 (§2.5, 관리자)
+//	/api/alerts/settings  알림 설정 (§2.6, 관리자)
+//	/api/push/*           Web Push 구독·시험 (§2.7)
+//	GET /api/settings/info 설정 화면 정보 (공개 부분 + 관리자 부분)
+//	그 밖의 /api/*는 JSON 404, /api/ 밖은 internal/webui (SPA)
 //
-// 응답에 수집 대상 여부(archived)는 넣지 않는다(Q14).
+// 상태를 바꾸는 /api/ 요청(POST·PUT·PATCH·DELETE)은 Origin이 MYWEATHER_ORIGIN과 같아야 한다(없거나 다르면 403).
+// 비로그인 응답에 수집 대상 여부(archived)는 넣지 않는다(Q14).
 package httpapi
 
 import (
@@ -24,14 +32,18 @@ import (
 	"strings"
 	"time"
 
+	"myweather/internal/alert"
+	"myweather/internal/auth"
 	"myweather/internal/budget"
 	"myweather/internal/collector"
 	"myweather/internal/grid"
 	"myweather/internal/kma"
 	"myweather/internal/kst"
+	"myweather/internal/push"
 	"myweather/internal/ratelimit"
 	"myweather/internal/store"
 	"myweather/internal/timeline"
+	"myweather/internal/webui"
 )
 
 // Options는 서버 의존성이다.
@@ -45,6 +57,11 @@ type Options struct {
 	IP        *ratelimit.ClientIP
 	Now       func() time.Time // nil이면 kst.Now
 	Log       *slog.Logger
+
+	Auth  *auth.Auth   // nil이면 인증·관리자 API는 503
+	Push  *push.Sender // nil이면 푸시 API는 503
+	Rules alert.Rules  // 알림 설정 화면에 보여 줄 기준값 (0값이면 alert.DefaultRules)
+	Web   http.Handler // /api/ 밖 경로. nil이면 webui.Handler()
 }
 
 // Server는 HTTP 핸들러 묶음이다.
@@ -58,6 +75,8 @@ type Server struct {
 	limOther    *ratelimit.Limiter // 그 외 /api/*: 분당 120
 	limNewHour  *ratelimit.Limiter // KMA를 부르게 되는 새 격자: 시간당 10
 	limNewDay   *ratelimit.Limiter // 하루 30
+	limReg      *ratelimit.Limiter // 패스키 등록: 분당 5
+	limLogin    *ratelimit.Limiter // 로그인: 분당 10
 }
 
 // New는 서버를 만든다.
@@ -74,6 +93,12 @@ func New(o Options) *Server {
 	if o.Regions == nil {
 		o.Regions = grid.MustLoad()
 	}
+	if o.Rules == (alert.Rules{}) {
+		o.Rules = alert.DefaultRules
+	}
+	if o.Web == nil {
+		o.Web = webui.Handler()
+	}
 	return &Server{
 		o: o, log: o.Log, started: o.Now(),
 		limTimeline: ratelimit.New(60, time.Minute, 20, nil),
@@ -81,6 +106,8 @@ func New(o Options) *Server {
 		limOther:    ratelimit.New(120, time.Minute, 120, nil),
 		limNewHour:  ratelimit.New(10, time.Hour, 10, nil),
 		limNewDay:   ratelimit.New(30, 24*time.Hour, 30, nil),
+		limReg:      ratelimit.New(5, time.Minute, 5, nil),
+		limLogin:    ratelimit.New(10, time.Minute, 10, nil),
 	}
 }
 
@@ -106,12 +133,43 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/search", s.limited(s.limLookup, s.search))
 	mux.HandleFunc("GET /api/regions", s.limited(s.limLookup, s.search))
 	mux.HandleFunc("GET /api/grid", s.limited(s.limLookup, s.gridLookup))
+	mux.HandleFunc("GET /api/now", s.limited(s.limLookup, s.nowBatch))
+
+	// 인증 (§2.8)
+	mux.HandleFunc("POST /api/auth/register/options", s.limited(s.limReg, s.registerOptions))
+	mux.HandleFunc("POST /api/auth/register/verify", s.limited(s.limReg, s.registerVerify))
+	mux.HandleFunc("POST /api/auth/login/options", s.limited(s.limLogin, s.loginOptions))
+	mux.HandleFunc("POST /api/auth/login/verify", s.limited(s.limLogin, s.loginVerify))
+	mux.HandleFunc("POST /api/auth/logout", s.limited(s.limOther, s.admin(s.logout)))
+	mux.HandleFunc("GET /api/auth/me", s.limited(s.limOther, s.me))
+	mux.HandleFunc("GET /api/auth/passkeys", s.limited(s.limOther, s.admin(s.passkeys)))
+	mux.HandleFunc("DELETE /api/auth/passkeys/{id}", s.limited(s.limOther, s.admin(s.deletePasskey)))
+
+	// 즐겨찾기 (§2.5)
+	mux.HandleFunc("GET /api/favorites", s.limited(s.limOther, s.admin(s.favoritesGet)))
+	mux.HandleFunc("POST /api/favorites", s.limited(s.limOther, s.admin(s.favoritesAdd)))
+	mux.HandleFunc("POST /api/favorites/merge", s.limited(s.limOther, s.admin(s.favoritesMerge)))
+	mux.HandleFunc("PUT /api/favorites/order", s.limited(s.limOther, s.admin(s.favoritesOrder)))
+	mux.HandleFunc("DELETE /api/favorites/{id}", s.limited(s.limOther, s.admin(s.favoritesDelete)))
+	mux.HandleFunc("PATCH /api/favorites/{id}", s.limited(s.limOther, s.admin(s.favoritesRename)))
+
+	// 알림 설정 (§2.6)
+	mux.HandleFunc("GET /api/alerts/settings", s.limited(s.limOther, s.admin(s.alertSettingsGet)))
+	mux.HandleFunc("PATCH /api/alerts/settings", s.limited(s.limOther, s.admin(s.alertSettingsPatch)))
+
+	// 푸시 (§2.7)
+	mux.HandleFunc("GET /api/push/vapid-public-key", s.limited(s.limOther, s.vapidKey))
+	mux.HandleFunc("POST /api/push/subscriptions", s.limited(s.limOther, s.admin(s.pushSubscribe)))
+	mux.HandleFunc("DELETE /api/push/subscriptions", s.limited(s.limOther, s.admin(s.pushUnsubscribe)))
+	mux.HandleFunc("POST /api/push/test", s.limited(s.limOther, s.admin(s.pushTest)))
+
+	// 설정 화면
+	mux.HandleFunc("GET /api/settings/info", s.limited(s.limOther, s.settingsInfo))
+
 	mux.HandleFunc("/api/", s.limited(s.limOther, func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", "없는 API예요.", 0)
 	}))
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		writeErr(w, http.StatusNotFound, "not_found", "없는 경로예요.", 0)
-	})
+	mux.Handle("/", s.o.Web)
 	return s.middleware(mux)
 }
 
@@ -139,6 +197,7 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		ip, key := s.o.IP.Resolve(r)
 		r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, reqInfo{ip, key}))
 		sw := &statusWriter{ResponseWriter: w}
+		r.Body = http.MaxBytesReader(sw, r.Body, 1<<20)
 		defer func() {
 			if p := recover(); p != nil {
 				s.log.Error("http: panic", "path", r.URL.Path, "panic", fmt.Sprint(p))
@@ -153,6 +212,9 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			s.log.Log(r.Context(), lvl, "http", "method", r.Method, "path", r.URL.Path, "status", sw.status,
 				"ms", time.Since(t0).Milliseconds(), "client_ip", ip)
 		}()
+		if !s.checkUnsafe(sw, r) {
+			return
+		}
 		next.ServeHTTP(sw, r)
 	})
 }
@@ -219,10 +281,10 @@ type waitItem struct {
 	GiveUp   bool      `json:"give_up,omitempty"`
 }
 
-// health: 인증이 없으므로 상세(수집 격자 등)는 서버 안에서 온 요청(KeyLocal)에만 준다(Q14).
+// health: 상세(수집 격자 등)는 서버 안에서 온 요청(KeyLocal)이나 관리자 세션에만 준다(Q14).
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	if info(r).key != ratelimit.KeyLocal {
+	if !s.isAdmin(w, r) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
@@ -283,6 +345,15 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out["db"] = dbInfo
+	pushInfo := map[string]any{"enabled": s.o.Push != nil}
+	if n, err := s.o.DB.PushSubCount(ctx); err == nil {
+		pushInfo["subscriptions"] = n
+	}
+	if v, err := s.o.DB.LastPushOK(ctx); err == nil {
+		pushInfo["last_sent_at"] = ts(v)
+	}
+	out["push"] = pushInfo
+	out["auth"] = map[string]any{"enabled": s.o.Auth != nil}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -404,12 +475,60 @@ func (s *Server) place(r *http.Request) (timeline.Place, error) {
 	return p, nil
 }
 
+// favPlace는 ?fav=id(관리자)의 장소다. 이름은 즐겨찾기 이름.
+func (s *Server) favPlace(w http.ResponseWriter, r *http.Request) (timeline.Place, bool) {
+	if _, ok := s.session(w, r); !ok {
+		if s.o.Auth == nil {
+			notConfigured(w, "로그인")
+		} else {
+			writeErr(w, http.StatusUnauthorized, "unauthorized", "로그인이 필요해요.", 0)
+		}
+		return timeline.Place{}, false
+	}
+	id, err := strconv.ParseInt(r.URL.Query().Get("fav"), 10, 64)
+	var f store.Favorite
+	if err == nil {
+		f, err = s.o.DB.Favorite(r.Context(), id)
+	}
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) || id <= 0 {
+			writeErr(w, http.StatusNotFound, "not_found", "없는 즐겨찾기예요.", 0)
+		} else {
+			s.internal(w, "timeline: favorite", err)
+		}
+		return timeline.Place{}, false
+	}
+	p := timeline.Place{NX: f.NX, NY: f.NY, Name: f.Name, Region: f.Region}
+	p.Lat, p.Lon = grid.ToLatLon(f.NX, f.NY)
+	reg := s.o.Regions.ByCode(f.Region)
+	if reg == nil {
+		reg = s.o.Regions.ForGrid(f.NX, f.NY)
+	}
+	if reg != nil {
+		p.Full = reg.Full()
+		if reg.HasPos {
+			p.Lat, p.Lon = reg.Lat, reg.Lon
+		}
+	}
+	p.Lat, p.Lon = math.Round(p.Lat*1e4)/1e4, math.Round(p.Lon*1e4)/1e4
+	return p, true
+}
+
 func (s *Server) timeline(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	place, err := s.place(r)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", err.Error(), 0)
-		return
+	var place timeline.Place
+	isFav := r.URL.Query().Has("fav")
+	if isFav {
+		var ok bool
+		if place, ok = s.favPlace(w, r); !ok {
+			return
+		}
+	} else {
+		var err error
+		if place, err = s.place(r); err != nil {
+			writeErr(w, http.StatusBadRequest, "bad_request", err.Error(), 0)
+			return
+		}
 	}
 	ens := collector.Ensured{Complete: true}
 	if c := s.o.Collector; c != nil && !c.IsCollected(place.NX, place.NY) {
@@ -446,6 +565,8 @@ func (s *Server) timeline(w http.ResponseWriter, r *http.Request) {
 		retry := time.Minute
 		if !ens.Complete && ens.RetryAfter > 0 {
 			retry = ens.RetryAfter
+		} else if c := s.o.Collector; c != nil && c.IsCollected(place.NX, place.NY) {
+			retry = 10 * time.Second // 방금 즐겨찾기에 넣은 격자: 수집 루프가 곧 받는다(KMA 호출 없이 DB만 다시 읽음)
 		}
 		writeErr(w, http.StatusServiceUnavailable, "upstream_unavailable", "기상청 자료를 아직 받지 못했어요. 잠시 뒤 다시 시도해 주세요.", retry)
 		return
@@ -475,7 +596,9 @@ func (s *Server) timeline(w http.ResponseWriter, r *http.Request) {
 	tl.DataVersion += ":" + h
 	etag := `"` + h + `"`
 	w.Header().Set("ETag", etag)
-	if ens.Complete {
+	if isFav {
+		w.Header().Set("Cache-Control", "private, no-cache")
+	} else if ens.Complete {
 		w.Header().Set("Cache-Control", "public, max-age=60")
 	} else {
 		w.Header().Set("Cache-Control", "no-cache")

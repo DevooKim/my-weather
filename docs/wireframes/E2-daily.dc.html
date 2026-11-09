@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>5B 일별 요약</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}</style>
+</helmet>
+<div style="width: 390px; height: 844px; display: flex; flex-direction: column; background: #FFFFFF; font-family: 'Noto Sans KR', system-ui, sans-serif; color: #1E2329; overflow: hidden;">
+<section style="display: flex; align-items: center; gap: 10px; padding: 6px 12px 6px 20px; background: #2B3440; color: #FFFFFF; flex: none;">
+<span style="font-size: 15px; font-weight: 500; flex-grow: 1;">집 · 8° 비</span>
+<button type="button" aria-label="메뉴" style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; background: none; border: 0; color: #FFFFFF;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg></button>
+</section>
+<div style="padding: 8px 20px; font-size: 12px; color: #5B6470; background: #F1F2F4;">더 내리면 머리 부분이 한 줄로 고정되고 일별 요약이 이어집니다</div>
+<div style="margin: 16px 20px 8px; font-size: 15px; font-weight: 700;">일별</div>
+<sc-for list="{{days}}" as="d" hint-placeholder-count="6">
+<button type="button" style="{{d.rowStyle}}">
+<span style="width: 72px; text-align: left; font-size: 14px; {{d.labelWeight}}">{{d.label}}</span>
+<span style="width: 28px; display: flex; justify-content: center;">
+<sc-if value="{{d.isSun}}" hint-placeholder-val="{{ false }}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#B26B00" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg></sc-if>
+<sc-if value="{{d.isCloud}}" hint-placeholder-val="{{ true }}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#5B6470" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M7 18h10a4 4 0 0 0 .5-8 6 6 0 0 0-11.5 1.5A3.3 3.3 0 0 0 7 18z"></path></svg></sc-if>
+<sc-if value="{{d.isRain}}" hint-placeholder-val="{{ false }}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2F6FB5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 14h10a3.5 3.5 0 0 0 .4-7 5.5 5.5 0 0 0-10.6 1.3A2.9 2.9 0 0 0 7 14z"></path><path d="M8 17l-1 3M12 17l-1 3M16 17l-1 3"></path></svg></sc-if>
+</span>
+<span style="width: 40px; font-size: 12px; color: #2A62B8; text-align: right;">{{d.pop}}</span>
+<span style="width: 28px; font-size: 14px; color: #5B6470; text-align: right;">{{d.min}}</span>
+<span style="flex-grow: 1; position: relative; height: 6px; border-radius: 3px; background: #E4E7EB;"><span style="{{d.barStyle}}"></span></span>
+<span style="width: 28px; font-size: 14px; font-weight: 500;">{{d.max}}</span>
+</button>
+</sc-for>
+<div style="margin: auto 16px 16px; padding: 10px 12px; background: #F1F2F4; border-radius: 10px; font-size: 13px; color: #424A55;">줄을 누르면 위로 올라가 타임라인이 그 날 아침으로 이동합니다. 어제는 실측, 오늘은 실측과 예보를 합친 값입니다.</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var raw = [
+      { label: '어제 8일', icon: 'sun', min: 5, max: 13, pop: '' },
+      { label: '오늘 9일', icon: 'rain', min: 5, max: 13, pop: '80%', today: true },
+      { label: '내일 10일', icon: 'cloud', min: 1, max: 9, pop: '30%' },
+      { label: '11일 수', icon: 'sun', min: 0, max: 8, pop: '10%' },
+      { label: '12일 목', icon: 'cloud', min: 2, max: 10, pop: '30%' },
+      { label: '13일 금', icon: 'rain', min: 3, max: 11, pop: '80%' }
+    ];
+    var lo = 0, hi = 14;
+    var days = raw.map(function (d) {
+      var l = (d.min - lo) / (hi - lo) * 100, r = (d.max - lo) / (hi - lo) * 100;
+      return {
+        label: d.label, pop: d.pop, min: d.min + '°', max: d.max + '°',
+        isSun: d.icon === 'sun', isCloud: d.icon === 'cloud', isRain: d.icon === 'rain',
+        labelWeight: d.today ? 'font-weight: 700;' : 'color: #424A55;',
+        rowStyle: 'margin: 0 16px; padding: 0 4px; min-height: 52px; display: flex; align-items: center; gap: 8px; background: ' + (d.today ? '#EAF1FC' : 'none') + '; border: 0; border-top: 1px solid #E4E7EB; border-radius: ' + (d.today ? '8px' : '0') + '; font: inherit; color: #1E2329; width: calc(100% - 32px); box-sizing: border-box;',
+        barStyle: 'position: absolute; top: 0; bottom: 0; left: ' + l + '%; width: ' + (r - l) + '%; border-radius: 3px; background: #E08A3C;'
+      };
+    });
+    return { days: days };
+  }
+}
+</script>
+</body>
+</html>

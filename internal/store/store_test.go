@@ -48,7 +48,7 @@ func TestMigrateIdempotentAndPragmas(t *testing.T) {
 			t.Fatalf("conn %d: foreign_keys=%d busy_timeout=%d", i, fk, bt)
 		}
 	}
-	// 이번 범위 테이블만 있어야 한다
+	// 0001·0002 테이블만 있어야 한다
 	rows, _ := d.R.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
 	var names []string
 	for rows.Next() {
@@ -57,7 +57,8 @@ func TestMigrateIdempotentAndPragmas(t *testing.T) {
 		names = append(names, n)
 	}
 	rows.Close()
-	want := []string{"fcst_value", "fcst_version", "grid_seen", "kma_call", "obs_value"}
+	want := []string{"alert_event", "alert_pref", "enroll_token", "favorite", "fcst_value", "fcst_version", "grid_seen",
+		"kma_call", "meta", "obs_value", "passkey", "push_sub", "session"}
 	if len(names) != len(want) {
 		t.Fatalf("tables=%v", names)
 	}
@@ -216,5 +217,36 @@ func TestBackup(t *testing.T) {
 	}
 	if _, err := d.Backup(ctx, to); err == nil {
 		t.Fatal("must refuse existing target")
+	}
+}
+
+func TestDeleteFavoriteRenumbersAfterReorder(t *testing.T) {
+	ctx := context.Background()
+	d := openTest(t)
+	now := time.Now()
+	var ids []int64
+	for i, n := range []string{"a", "b", "c", "d"} {
+		f, _, _, err := d.AddFavorite(ctx, FavInput{Name: n, NX: 60 + i, NY: 120}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, f.ID)
+	}
+	_, v, err := d.ReorderFavorites(ctx, []int64{ids[3], ids[2], ids[1], ids[0]}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DeleteFavorite(ctx, ids[2]); err != nil { // 두 번째(pos 1) 삭제
+		t.Fatal(err)
+	}
+	fs, v2, _ := d.Favorites(ctx)
+	if v2 != v+1 || len(fs) != 3 {
+		t.Fatalf("v=%d→%d n=%d", v, v2, len(fs))
+	}
+	want := []int64{ids[3], ids[1], ids[0]}
+	for i, f := range fs {
+		if f.Pos != i || f.ID != want[i] {
+			t.Fatalf("after delete: %+v", fs)
+		}
 	}
 }

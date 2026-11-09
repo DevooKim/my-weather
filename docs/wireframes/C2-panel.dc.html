@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>3B 아래 고정 상세 패널</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}</style>
+</helmet>
+<div style="width: 390px; height: 520px; display: flex; flex-direction: column; background: #FFFFFF; font-family: 'Noto Sans KR', system-ui, sans-serif; color: #1E2329; overflow: hidden;">
+<section style="padding: 8px 20px;">
+<div style="font-size: 16px; font-weight: 500; min-height: 44px; display: flex; align-items: center;">집 · 강남구 역삼1동</div>
+<div style="display: flex; align-items: baseline; gap: 10px;"><span style="font-size: 48px; font-weight: 700; line-height: 1.1;">8°</span><span style="font-size: 15px; font-weight: 500;">비 2mm</span></div>
+</section>
+<section style="padding: 10px 0 8px;">
+<dc-import name="Timeline" w="{{tw}}" range="phone" sel="{{sel}}" hint-size="390px,150px"></dc-import>
+</section>
+<section style="margin: 4px 16px 16px; padding: 12px 14px; border: 1px solid #D5D9DF; border-radius: 12px; display: flex; flex-direction: column; gap: 6px;">
+<div style="display: flex; align-items: center; justify-content: space-between;"><span style="font-size: 13px; color: #5B6470;">내일 10일 0시 · 예보 (20시 발표)</span><button type="button" style="min-height: 32px; padding: 0 10px; border: 1px solid #C4C9D0; border-radius: 16px; background: #FFFFFF; font: inherit; font-size: 12px; color: #1E2329;">지금으로</button></div>
+<div style="display: flex; align-items: baseline; gap: 8px;"><span style="font-size: 26px; font-weight: 700;">6°</span><span style="font-size: 14px;">체감 3° · 흐림</span></div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; font-size: 14px;">
+<span>강수확률 30%</span><span>강수량 없음</span>
+<span>북동풍 3m/s</span><span>습도 70%</span>
+</div>
+<div style="font-size: 13px; color: #424A55;">어제 같은 시각보다 1° 낮음</div>
+</section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":520}}'>
+class Component extends DCLogic {
+  renderVals() { return { tw: 390, sel: 6 }; }
+}
+</script>
+</body>
+</html>

@@ -1,9 +1,11 @@
 // Command myweather는 my-weather 단일 바이너리다.
 //
-// 하위 명령(이번 단계):
+// 하위 명령:
 //
 //	myweather migrate          DB 스키마를 최신으로 올린다
-//	myweather serve [--once]   수집기와 HTTP API(MYWEATHER_LISTEN)를 함께 실행한다. --once는 수집만 한 번 하고 끝낸다
+//	myweather serve [--once]   수집기·HTTP API(MYWEATHER_LISTEN)·알림을 함께 실행한다. --once는 수집만 한 번 하고 끝낸다
+//	myweather enroll-token [--ttl 10m] [--revoke-existing]   일회용 패스키 등록 토큰 발급 (KMA 키 불필요)
+//	myweather vapid-keygen [--out FILE]   VAPID 키 쌍 출력 (--out이면 0600 파일로 저장, 이미 있으면 거부)
 //	myweather backup --to P    VACUUM INTO로 온라인 백업 + integrity_check
 //	myweather version          버전 출력 (빌드 때 -ldflags "-X main.version=..."로 주입)
 //
@@ -27,6 +29,8 @@ import (
 	"syscall"
 	"time"
 
+	"myweather/internal/alert"
+	"myweather/internal/auth"
 	"myweather/internal/budget"
 	"myweather/internal/collector"
 	"myweather/internal/config"
@@ -34,6 +38,7 @@ import (
 	"myweather/internal/httpapi"
 	"myweather/internal/kma"
 	"myweather/internal/kst"
+	"myweather/internal/push"
 	"myweather/internal/ratelimit"
 	"myweather/internal/store"
 )
@@ -46,7 +51,11 @@ func usage() {
 
 commands:
   migrate          apply embedded SQL migrations to the DB
-  serve [--once]   run the KMA collector and HTTP API (--once: collect due work once and exit, no HTTP)
+  serve [--once]   run the KMA collector, HTTP API and alerts (--once: collect due work once and exit, no HTTP)
+  enroll-token [--ttl 10m] [--revoke-existing]
+                   issue a one-time passkey enrollment token (max 24h; --revoke-existing deletes old passkeys/sessions on use)
+  vapid-keygen [--out FILE]
+                   generate a VAPID key pair (stdout, or FILE with mode 0600; refuses to overwrite)
   backup --to P    online backup (VACUUM INTO) + integrity_check
   version          print version
 
@@ -62,7 +71,12 @@ environment:
   MYWEATHER_ENV_FILE          file to read api_key from when KMA_SERVICE_KEY is unset (default .env)
   MYWEATHER_KMA_BASE_URL      KMA endpoint (default apis.data.go.kr)
   KMA_DAILY_LIMIT             daily calls per operation (default 10000)
-  MYWEATHER_OBS_BACKFILL_MAX  startup ncst backfill hours per grid, 0-23 (default 23)`)
+  MYWEATHER_OBS_BACKFILL_MAX  startup ncst backfill hours per grid, 0-23 (default 23)
+  MYWEATHER_RP_ID             passkey RP ID, e.g. weather.example.com (unset: auth/admin API return 503)
+  MYWEATHER_ORIGIN            web origin for WebAuthn and Origin checks (default https://<RP_ID>)
+  MYWEATHER_VAPID_FILE        file with VAPID_PUBLIC_KEY= and VAPID_PRIVATE_KEY= lines (output of vapid-keygen)
+  VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY  VAPID keys when MYWEATHER_VAPID_FILE is unset (unset: push disabled)
+  VAPID_SUBJECT               push contact (default mailto:khwoo8026@gmail.com)`)
 }
 
 func main() {
@@ -83,6 +97,10 @@ func main() {
 		err = runServe(ctx, log, os.Args[2:])
 	case "backup":
 		err = runBackup(ctx, os.Args[2:])
+	case "enroll-token":
+		err = runEnrollToken(ctx, os.Args[2:])
+	case "vapid-keygen":
+		err = runVAPIDKeygen(os.Args[2:])
 	case "version", "--version":
 		fmt.Println(version)
 		return
@@ -177,10 +195,39 @@ func runServe(ctx context.Context, log *slog.Logger, args []string) error {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	c := collector.New(db, api, b, collector.Options{
+
+	var sender *push.Sender
+	if cfg.PushEnabled() {
+		if sender, err = push.New(push.Options{DB: db, PublicKey: cfg.VAPIDPublic, PrivateKey: cfg.VAPIDPrivate, Subject: cfg.VAPIDSubject, Log: log}); err != nil {
+			return err
+		}
+	} else if !*once {
+		log.Warn("myweather: VAPID keys not set, push disabled (alerts are judged and recorded only)")
+	}
+	var alerts *alert.Engine
+	if !*once {
+		opt := alert.Options{DB: db, Log: log}
+		if sender != nil {
+			opt.Push = sender
+		}
+		alerts = alert.New(opt)
+	}
+	colOpt := collector.Options{
 		Grids: cfg.Grids, StartupBackfill: cfg.StartupBackfill, Log: log,
 		Context: ctx, OnDemandBackfill: cfg.OnDemandBackfill, OnDemandPast: cfg.OnDemandPast,
-	})
+	}
+	if alerts != nil {
+		colOpt.OnUltra = alerts.OnUltra
+	}
+	c := collector.New(db, api, b, colOpt)
+	favGrids, err := db.FavoriteGrids(ctx)
+	if err != nil {
+		return err
+	}
+	c.SetExtraGrids(favGrids)
+	if len(favGrids) > 0 {
+		log.Info("myweather: favorite grids added to collection", "favorite_grids", len(favGrids), "total_grids", len(c.Grids()))
+	}
 	if *once {
 		n := c.Step(ctx)
 		log.Info("myweather: once done", "calls", n, "budget", b.Snapshot().ByOp)
@@ -191,10 +238,26 @@ func runServe(ctx context.Context, log *slog.Logger, args []string) error {
 	if err != nil {
 		return err
 	}
-	api2 := httpapi.New(httpapi.Options{
+	var au *auth.Auth
+	if cfg.AuthEnabled() {
+		if au, err = auth.New(auth.Options{DB: db, RPID: cfg.RPID, Origin: cfg.Origin, Log: log}); err != nil {
+			return err
+		}
+		log.Info("myweather: passkey auth enabled", "rp_id", cfg.RPID, "origin", cfg.Origin)
+	} else {
+		log.Warn("myweather: MYWEATHER_RP_ID not set, login and admin API disabled (503)")
+	}
+	hopt := httpapi.Options{
 		DB: db, DBPath: cfg.DBPath, Collector: c, Budget: b, Regions: regions, Version: version, Log: log,
 		IP: &ratelimit.ClientIP{TrustHeader: cfg.TrustedIPHeader, Trusted: cfg.TrustedProxies, Log: log},
-	})
+	}
+	if au != nil {
+		hopt.Auth = au
+	}
+	if sender != nil {
+		hopt.Push = sender
+	}
+	api2 := httpapi.New(hopt)
 	ln, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
 		return err
@@ -212,6 +275,10 @@ func runServe(ctx context.Context, log *slog.Logger, args []string) error {
 		"ondemand_backfill", cfg.OnDemandBackfill, "ondemand_past", cfg.OnDemandPast)
 
 	errc := make(chan error, 2)
+	go alerts.Run(ctx)
+	if au != nil {
+		go au.RunCleanup(ctx)
+	}
 	go func() { errc <- c.Run(ctx) }()
 	go func() { errc <- srv.Serve(ln) }()
 	err = <-errc
@@ -252,5 +319,60 @@ func runBackup(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Printf("%s: ok (schema v%d, %d bytes)\n", res.Path, res.SchemaVersion, res.Bytes)
+	return nil
+}
+
+func runEnrollToken(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("enroll-token", flag.ExitOnError)
+	ttl := fs.Duration("ttl", auth.DefaultTokenTTL, "token lifetime (max 24h)")
+	revoke := fs.Bool("revoke-existing", false, "on successful enrollment, delete all existing passkeys and sessions (lost phone)")
+	fs.Parse(args)
+	cfg, err := config.Load(nil)
+	if err != nil {
+		return err
+	}
+	db, err := openDB(ctx, cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	tok, exp, err := auth.IssueEnrollToken(ctx, db, *ttl, *revoke, kst.Now())
+	if err != nil {
+		return err
+	}
+	fmt.Println(tok)
+	note := ""
+	if *revoke {
+		note = "; existing passkeys and sessions will be deleted when it is used"
+	}
+	fmt.Fprintf(os.Stderr, "one-time token, valid until %s KST (%s)%s\n", exp.Format("2006-01-02 15:04:05"), *ttl, note)
+	return nil
+}
+
+func runVAPIDKeygen(args []string) error {
+	fs := flag.NewFlagSet("vapid-keygen", flag.ExitOnError)
+	out := fs.String("out", "", "write to this file (mode 0600, must not exist) instead of stdout")
+	fs.Parse(args)
+	pub, priv, err := push.GenerateKeys()
+	if err != nil {
+		return err
+	}
+	text := "VAPID_PUBLIC_KEY=" + pub + "\nVAPID_PRIVATE_KEY=" + priv + "\n"
+	if *out == "" {
+		fmt.Print(text)
+		return nil
+	}
+	f, err := os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(text); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "%s: written (public key %s)\n", *out, pub)
 	return nil
 }

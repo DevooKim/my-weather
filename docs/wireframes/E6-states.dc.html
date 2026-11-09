@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>5F 오류와 빈 상태</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}</style>
+</helmet>
+<div style="width: 390px; height: 844px; display: flex; flex-direction: column; gap: 14px; padding: 16px; box-sizing: border-box; background: #F4F5F7; font-family: 'Noto Sans KR', system-ui, sans-serif; color: #1E2329; overflow: hidden;">
+<div style="font-size: 12px; color: #5B6470;">① 서버에 연결할 수 없을 때 (메인 화면 맨 위)</div>
+<div role="status" style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #FFF3E6; border-radius: 10px; font-size: 14px; color: #6B3A00;"><span style="flex-grow: 1;">연결이 끊겨 22:10에 받은 날씨를 보여 드려요</span><button type="button" style="min-height: 36px; padding: 0 12px; border: 1px solid #C27A2C; border-radius: 18px; background: #FFFFFF; font: inherit; font-size: 13px; color: #6B3A00;">다시 시도</button></div>
+<div style="font-size: 12px; color: #5B6470;">② 처음 보는 지역인데 기상청 응답이 없을 때</div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 24px 16px; background: #FFFFFF; border-radius: 12px; text-align: center;">
+<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#5B6470" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M7 18h10a4 4 0 0 0 .5-8 6 6 0 0 0-11.5 1.5A3.3 3.3 0 0 0 7 18z"></path></svg>
+<b style="font-size: 15px;">이 지역 예보를 아직 받지 못했어요</b>
+<span style="font-size: 13px; color: #424A55;">기상청 응답이 늦어지고 있어요. 1분 뒤 자동으로 다시 시도합니다.</span>
+</div>
+<div style="font-size: 12px; color: #5B6470;">③ 검색 결과가 없을 때 (장소 시트)</div>
+<div style="padding: 14px 16px; background: #FFFFFF; border-radius: 12px; font-size: 14px; color: #424A55;">'서교도'와 맞는 동이 없어요. 동 이름으로 검색해 보세요. 예: 서교동, 역삼1동</div>
+<div style="font-size: 12px; color: #5B6470;">④ 위치 권한이 꺼져 있을 때</div>
+<div style="display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; background: #FFFFFF; border-radius: 12px;">
+<span style="font-size: 14px; color: #424A55;">위치 권한이 꺼져 있어요. iPhone 설정 → Safari → 위치에서 허용하거나, 동 이름으로 찾아보세요.</span>
+<button type="button" style="align-self: flex-start; min-height: 40px; padding: 0 14px; border: 0; border-radius: 20px; background: #1E2329; color: #FFFFFF; font: inherit; font-size: 13px;">동 이름으로 찾기</button>
+</div>
+<div style="font-size: 12px; color: #5B6470;">⑤ 즐겨찾기가 하나도 없을 때 (첫 접속)</div>
+<div style="padding: 14px 16px; background: #FFFFFF; border-radius: 12px; font-size: 14px; color: #424A55;">장소 시트가 바로 열리고, 맨 위에 '현재 위치'와 검색창이 보입니다.</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

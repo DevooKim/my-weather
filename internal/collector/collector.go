@@ -7,6 +7,9 @@
 //     저장된 직전 발표분이 없을 때만(새 DB 등) 직전 발표분을 최대 2개까지 거슬러 한 번씩 받는다(trigger=fallback).
 //   - 단기예보는 첫 성공 1시간 뒤 1회 재수집한다. 재수집 여부는 DB(fcst_version)에서 유도하므로 재시작해도 유지된다.
 //   - 저장은 내용 해시로 중복 제거한다(store.SaveFcst / SaveObs).
+//   - 수집 대상 = 설정 격자(MYWEATHER_GRIDS) ∪ 서버 즐겨찾기 격자(SetExtraGrids). 새로 들어온 격자는
+//     다음 Step에서 바로 최신 발표분을 받고 실황을 StartupBackfill개까지 백필한다(설계 §5.5).
+//   - 초단기예보 최신 발표분을 정기 수집(schedule·startup·retry)으로 저장하면 OnUltra를 부른다('곧 비' 판정).
 //
 // 즉시 조회(ondemand.go)와 정기 수집은 같은 flight 맵을 써서 같은 키를 한 번만 보낸다.
 package collector
@@ -14,7 +17,9 @@ package collector
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"myweather/internal/budget"
@@ -68,6 +73,10 @@ type Options struct {
 	Context          context.Context // 즉시 조회 호출에 쓸 서버 수명 ctx. nil이면 Background
 	OnDemandBackfill int             // 2단계 실황 백필 최대 시각 수 (0이면 건너뜀)
 	OnDemandPast     int             // 3단계 과거 단기 발표분 최대 개수 (0이면 건너뜀)
+
+	// OnUltra는 초단기예보 최신 발표분을 정기 수집으로 저장한 직후 불린다(같은 격자·발표분은 한 번).
+	// 수집 고루틴에서 바로 부르므로 오래 걸리는 일은 호출받는 쪽이 따로 돌린다.
+	OnUltra func(nx, ny int, base int64)
 }
 
 type key struct {
@@ -106,6 +115,11 @@ type Collector struct {
 	inflight      map[key]*flight // 진행 중인 호출. 같은 키는 한 번만 보내고 결과를 나눈다(singleflight)
 
 	od odState // 즉시 조회 상태 (ondemand.go)
+
+	gridList   atomic.Pointer[[]config.Grid] // 지금 수집 대상 (설정 ∪ 즐겨찾기)
+	freshGrid  map[config.Grid]bool          // 실행 중에 새로 들어온 격자: 첫 백필을 StartupBackfill개까지
+	ultraNoted map[config.Grid]int64         // OnUltra를 부른 마지막 발표분
+	kick       chan struct{}
 }
 
 // New는 수집기를 만든다.
@@ -122,7 +136,7 @@ func New(db *store.DB, api Fetcher, b *budget.Budget, opt Options) *Collector {
 	if opt.StartupBackfill > 23 {
 		opt.StartupBackfill = 23
 	}
-	return &Collector{
+	c := &Collector{
 		db: db, api: api, budget: b, opt: opt, log: opt.Log,
 		jobs:          map[key]*jobState{},
 		refetchTried:  map[key]bool{},
@@ -131,6 +145,64 @@ func New(db *store.DB, api Fetcher, b *budget.Budget, opt Options) *Collector {
 		backfillHour:  map[config.Grid]int64{},
 		inflight:      map[key]*flight{},
 		od:            newOdState(),
+		freshGrid:     map[config.Grid]bool{},
+		ultraNoted:    map[config.Grid]int64{},
+		kick:          make(chan struct{}, 1),
+	}
+	gs := slices.Clone(opt.Grids)
+	c.gridList.Store(&gs)
+	return c
+}
+
+func (c *Collector) grids() []config.Grid { return *c.gridList.Load() }
+
+// SetExtraGrids는 설정 격자에 더할 격자(서버 즐겨찾기)를 바꾼다. 새 격자가 생기면 수집 루프를 바로 깨운다.
+// 빠진 격자의 재시도 상태는 버린다(저장된 데이터는 그대로).
+func (c *Collector) SetExtraGrids(extra [][2]int) {
+	next := slices.Clone(c.opt.Grids)
+	seen := map[config.Grid]bool{}
+	for _, g := range next {
+		seen[g] = true
+	}
+	for _, e := range extra {
+		g := config.Grid{NX: e[0], NY: e[1]}
+		if !seen[g] {
+			seen[g] = true
+			next = append(next, g)
+		}
+	}
+	c.mu.Lock()
+	prev := map[config.Grid]bool{}
+	for _, g := range c.grids() {
+		prev[g] = true
+	}
+	added := false
+	for _, g := range next {
+		if !prev[g] {
+			added = true
+			if c.started {
+				c.freshGrid[g] = true
+			}
+		}
+	}
+	for k := range c.jobs {
+		if !seen[config.Grid{NX: k.nx, NY: k.ny}] {
+			delete(c.jobs, k)
+		}
+	}
+	for g := range c.freshGrid {
+		if !seen[g] {
+			delete(c.freshGrid, g)
+		}
+	}
+	c.gridList.Store(&next)
+	c.mu.Unlock()
+	if added {
+		c.log.Info("collector: grids changed", "grids", len(next))
+		select {
+		case c.kick <- struct{}{}:
+		default:
+		}
 	}
 }
 
@@ -150,6 +222,8 @@ func (c *Collector) Run(ctx context.Context) error {
 			t.Stop()
 			return ctx.Err()
 		case <-t.C:
+		case <-c.kick:
+			t.Stop()
 		}
 	}
 }
@@ -190,7 +264,9 @@ func (c *Collector) plan(ctx context.Context, now time.Time, first bool) []task 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	for _, g := range c.opt.Grids {
+	for _, g := range c.grids() {
+		fresh := c.freshGrid[g]
+		delete(c.freshGrid, g)
 		for _, op := range kma.Ops {
 			k := op.Kind()
 			cur := k.Latest(now)
@@ -250,7 +326,7 @@ func (c *Collector) plan(ctx context.Context, now time.Time, first bool) []task 
 			if op == kma.OpNcst && c.backfillHour[g] != ck.base {
 				c.backfillHour[g] = ck.base
 				limit := HourlyBackfill
-				if first {
+				if first || fresh {
 					limit = c.opt.StartupBackfill
 				}
 				tasks = append(tasks, c.backfillTasks(ctx, g, cur, limit)...)
@@ -399,6 +475,9 @@ func (c *Collector) exec(ctx context.Context, t task) bool {
 	}
 	res, outcome, errText, ver, called := c.call(ctx, t, budget.Favorite)
 	f.ok, f.called, f.code = outcome != store.OutcomeFailed && called, called, res.Code
+	if f.ok && t.op == kma.OpUltra && (t.trigger == TrigSchedule || t.trigger == TrigStartup || t.trigger == TrigRetry) {
+		c.noteUltra(t.key)
+	}
 	if !called {
 		c.log.Warn("collector: daily budget exhausted, skipped", logArgs...)
 		c.mu.Lock()
@@ -443,6 +522,23 @@ func (c *Collector) exec(ctx context.Context, t task) bool {
 		}
 	}
 	return true
+}
+
+// noteUltra는 저장한 초단기 발표분이 지금의 최신 발표분이면 OnUltra를 부른다(격자·발표분마다 한 번).
+func (c *Collector) noteUltra(k key) {
+	if c.opt.OnUltra == nil || k.base != kst.ToInt(kst.Ultra.Latest(c.opt.Now())) {
+		return
+	}
+	g := config.Grid{NX: k.nx, NY: k.ny}
+	c.mu.Lock()
+	dup := c.ultraNoted[g] >= k.base
+	if !dup {
+		c.ultraNoted[g] = k.base
+	}
+	c.mu.Unlock()
+	if !dup {
+		c.opt.OnUltra(k.nx, k.ny, k.base)
+	}
 }
 
 // flight는 진행 중인 호출 하나다. done이 닫히면 결과 필드를 읽을 수 있다.

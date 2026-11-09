@@ -65,7 +65,7 @@ type Ensured struct {
 
 // IsCollected는 정기 수집 대상 격자인지다.
 func (c *Collector) IsCollected(nx, ny int) bool {
-	for _, g := range c.opt.Grids {
+	for _, g := range c.grids() {
 		if g.NX == nx && g.NY == ny {
 			return true
 		}
@@ -335,10 +335,11 @@ func (o *odState) gcLocked(now time.Time) {
 	}
 }
 
-// Grids는 정기 수집 대상 격자 목록이다(운영 상태용).
+// Grids는 정기 수집 대상 격자 목록이다(운영 상태용). 설정 격자 + 서버 즐겨찾기 격자.
 func (c *Collector) Grids() [][2]int {
-	out := make([][2]int, len(c.opt.Grids))
-	for i, g := range c.opt.Grids {
+	gs := c.grids()
+	out := make([][2]int, len(gs))
+	for i, g := range gs {
 		out[i] = [2]int{g.NX, g.NY}
 	}
 	return out

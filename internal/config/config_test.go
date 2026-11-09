@@ -78,3 +78,36 @@ func TestHTTPSettings(t *testing.T) {
 		t.Fatal("want error")
 	}
 }
+
+func TestAuthPush(t *testing.T) {
+	c, err := Load(env(nil))
+	if err != nil || c.AuthEnabled() || c.PushEnabled() || c.VAPIDSubject != "mailto:khwoo8026@gmail.com" {
+		t.Fatalf("defaults %+v %v", c, err)
+	}
+	c, err = Load(env(map[string]string{"MYWEATHER_RP_ID": "Weather.example.com"}))
+	if err != nil || c.RPID != "weather.example.com" || c.Origin != "https://weather.example.com" {
+		t.Fatalf("rp %+v %v", c, err)
+	}
+	for _, bad := range []map[string]string{
+		{"MYWEATHER_RP_ID": "a.example.com", "MYWEATHER_ORIGIN": "https://b.example.com"},
+		{"MYWEATHER_RP_ID": "a.example.com", "MYWEATHER_ORIGIN": "http://a.example.com"},
+		{"MYWEATHER_RP_ID": "https://a.example.com"},
+		{"MYWEATHER_ORIGIN": "https://a.example.com"},
+		{"VAPID_PUBLIC_KEY": "x"},
+		{"VAPID_SUBJECT": "me@example.com"},
+		{"MYWEATHER_VAPID_FILE": "/nonexistent/vapid"},
+	} {
+		if _, err := Load(env(bad)); err == nil {
+			t.Errorf("accepted %v", bad)
+		}
+	}
+	if c, err := Load(env(map[string]string{"MYWEATHER_RP_ID": "localhost", "MYWEATHER_ORIGIN": "http://localhost:5173"})); err != nil || c.Origin != "http://localhost:5173" {
+		t.Fatalf("dev origin %v", err)
+	}
+	f := filepath.Join(t.TempDir(), "vapid")
+	os.WriteFile(f, []byte("# keys\nVAPID_PUBLIC_KEY=pub\nVAPID_PRIVATE_KEY=\"priv\"\n"), 0o600)
+	c, err = Load(env(map[string]string{"MYWEATHER_VAPID_FILE": f}))
+	if err != nil || !c.PushEnabled() || c.VAPIDPublic != "pub" || c.VAPIDPrivate != "priv" {
+		t.Fatalf("vapid file %+v %v", c, err)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -103,6 +104,19 @@ func TestServeHTTPStartsAndStops(t *testing.T) {
 	t.Setenv("MYWEATHER_GRIDS", "61,125")
 	t.Setenv("MYWEATHER_OBS_BACKFILL_MAX", "0")
 	t.Setenv("MYWEATHER_LISTEN", fmt.Sprintf("0.0.0.0:%d", port))
+	t.Setenv("MYWEATHER_RP_ID", "localhost")
+	t.Setenv("MYWEATHER_ORIGIN", fmt.Sprintf("http://localhost:%d", port))
+	vf := filepath.Join(t.TempDir(), "vapid.env")
+	if err := runVAPIDKeygen([]string{"--out", vf}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runVAPIDKeygen([]string{"--out", vf}); err == nil {
+		t.Fatal("vapid-keygen must not overwrite")
+	}
+	if st, _ := os.Stat(vf); st.Mode().Perm() != 0o600 {
+		t.Fatalf("vapid file mode %v", st.Mode())
+	}
+	t.Setenv("MYWEATHER_VAPID_FILE", vf)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -123,6 +137,21 @@ func TestServeHTTPStartsAndStops(t *testing.T) {
 	if resp.StatusCode != 200 || !strings.Contains(string(b), `"ok":true`) {
 		t.Fatalf("%d %s", resp.StatusCode, b)
 	}
+	for path, want := range map[string]string{
+		"/api/push/vapid-public-key": `"key":"B`,
+		"/api/auth/me":               `"admin":false`,
+		"/":                          "<html",
+	} {
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d%s", port, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 || !strings.Contains(strings.ToLower(string(b)), strings.ToLower(want)) {
+			t.Fatalf("%s: %d %s", path, resp.StatusCode, b)
+		}
+	}
 	cancel()
 	select {
 	case err := <-done:
@@ -131,5 +160,34 @@ func TestServeHTTPStartsAndStops(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("serve did not stop")
+	}
+}
+
+// enroll-token은 KMA 키 없이 동작하고, 해시만 저장한다.
+func TestEnrollTokenCommand(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "e.sqlite3")
+	t.Setenv("MYWEATHER_DB", dbPath)
+	t.Setenv("KMA_SERVICE_KEY", "")
+	t.Setenv("MYWEATHER_ENV_FILE", filepath.Join(t.TempDir(), "missing.env"))
+	ctx := context.Background()
+	if err := runEnrollToken(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := runEnrollToken(ctx, []string{"--ttl", "30m", "--revoke-existing"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runEnrollToken(ctx, []string{"--ttl", "48h"}); err == nil {
+		t.Fatal("ttl > 24h accepted")
+	}
+	db, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var n, revoke int
+	var span int64
+	db.R.QueryRow(`SELECT count(*), sum(revoke_existing), min(expires_at - created_at) FROM enroll_token`).Scan(&n, &revoke, &span)
+	if n != 2 || revoke != 1 || span != 600 {
+		t.Fatalf("tokens n=%d revoke=%d min_ttl=%d", n, revoke, span)
 	}
 }
