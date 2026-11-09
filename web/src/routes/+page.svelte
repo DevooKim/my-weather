@@ -30,7 +30,15 @@
 		upd();
 		mq.addEventListener('change', upd);
 		window.addEventListener('resize', upd);
-		const onScroll = () => (scrollY = window.scrollY);
+		// 스크롤 이벤트마다가 아니라 화면을 그릴 때 한 번만 머리 높이를 갱신한다
+		let sraf = 0;
+		const onScroll = () => {
+			if (sraf) return;
+			sraf = requestAnimationFrame(() => {
+				sraf = 0;
+				scrollY = Math.max(0, window.scrollY);
+			});
+		};
 		window.addEventListener('scroll', onScroll, { passive: true });
 		const onPop = () => {
 			if (app.settingsOpen) app.settingsOpen = false;
@@ -40,6 +48,7 @@
 			mq.removeEventListener('change', upd);
 			window.removeEventListener('resize', upd);
 			window.removeEventListener('scroll', onScroll);
+			if (sraf) cancelAnimationFrame(sraf);
 			window.removeEventListener('popstate', onPop);
 		};
 	});

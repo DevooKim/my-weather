@@ -57,7 +57,7 @@
 </script>
 
 <header class="hero" style="height:{h}px">
-	<WeatherCanvas {scene} />
+	<WeatherCanvas {scene} height={full} />
 	<div class="inner" style="height:{h}px">
 		{#if isBar}
 			<div class="barrow">

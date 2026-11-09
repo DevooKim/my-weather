@@ -4,7 +4,9 @@
 	import type { Scene } from '$lib/scene';
 	import { onMount } from 'svelte';
 
-	let { scene }: { scene: Scene } = $props();
+	// height: 고정 높이(px). 스크롤로 접히는 머리처럼 부모 높이가 매 프레임 바뀌는 곳에서는
+	// 캔버스를 가장 큰 높이로 한 번만 만들고 부모가 잘라 보이게 한다(크기 재설정·입자 리셋이 없어 부드럽다).
+	let { scene, height }: { scene: Scene; height?: number } = $props();
 
 	let canvas: HTMLCanvasElement | undefined = $state();
 
@@ -42,13 +44,30 @@
 		};
 		const resize = () => {
 			const r = cv.getBoundingClientRect();
-			dpr = Math.min(2, window.devicePixelRatio || 1);
-			w = r.width;
-			h = r.height;
+			const nd = Math.min(2, window.devicePixelRatio || 1);
+			const nw = Math.round(r.width),
+				nh = Math.round(r.height);
+			if (nw === w && nh === h && nd === dpr) return;
+			const first = w === 0 || h === 0;
+			const ow = w,
+				oh = h;
+			dpr = nd;
+			w = nw;
+			h = nh;
 			cv.width = Math.round(w * dpr);
 			cv.height = Math.round(h * dpr);
 			ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-			reset();
+			if (first) reset();
+			else {
+				// 입자를 버리지 않고 새 크기에 맞춰 옮긴 뒤 개수만 맞춘다(크기가 바뀌어도 비가 튀지 않게)
+				for (const p of parts) {
+					p.x = (p.x / Math.max(1, ow)) * w;
+					p.y = (p.y / Math.max(1, oh)) * h;
+				}
+				const n = count();
+				if (parts.length > n) parts.length = n;
+				while (parts.length < n) parts.push(spawn(true));
+			}
 			if (mq.matches) draw(0);
 		};
 
@@ -203,7 +222,11 @@
 	});
 </script>
 
-<div class="bg" style="background: linear-gradient(180deg, {scene.top} 0%, {scene.bottom} 100%)">
+<div
+	class="bg"
+	class:fixedh={height != null}
+	style="background: linear-gradient(180deg, {scene.top} 0%, {scene.bottom} 100%);{height != null ? ` height:${height}px;` : ''}"
+>
 	<canvas bind:this={canvas} aria-hidden="true"></canvas>
 </div>
 
@@ -213,6 +236,9 @@
 		inset: 0;
 		overflow: hidden;
 		transition: background 0.6s;
+	}
+	.bg.fixedh {
+		bottom: auto;
 	}
 	canvas {
 		position: absolute;
