@@ -54,3 +54,27 @@ func TestLoadKey(t *testing.T) {
 		t.Fatal("want error")
 	}
 }
+
+func TestHTTPSettings(t *testing.T) {
+	c, err := Load(env(nil))
+	if err != nil || c.TrustedIPHeader != "X-Forwarded-For" || c.OnDemandBackfill != 23 || c.OnDemandPast != 3 {
+		t.Fatalf("%+v %v", c, err)
+	}
+	c, err = Load(env(map[string]string{"TRUSTED_IP_HEADER": "none", "MYWEATHER_ONDEMAND_BACKFILL_MAX": "99", "MYWEATHER_ONDEMAND_PAST_MAX": "0"}))
+	if err != nil || c.TrustedIPHeader != "" || c.OnDemandBackfill != 23 || c.OnDemandPast != 0 {
+		t.Fatalf("%+v %v", c, err)
+	}
+	if len(c.TrustedProxies) != 2 {
+		t.Fatalf("default proxies %v", c.TrustedProxies)
+	}
+	c, err = Load(env(map[string]string{"MYWEATHER_TRUSTED_PROXIES": "127.0.0.0/8,::1/128,10.89.0.0/16", "MYWEATHER_LISTEN": "0.0.0.0:8080"}))
+	if err != nil || len(c.TrustedProxies) != 3 || c.Listen != "0.0.0.0:8080" {
+		t.Fatalf("%+v %v", c, err)
+	}
+	if _, err := Load(env(map[string]string{"MYWEATHER_TRUSTED_PROXIES": "10.0.0.0/99"})); err == nil {
+		t.Fatal("bad cidr")
+	}
+	if _, err := Load(env(map[string]string{"MYWEATHER_ONDEMAND_PAST_MAX": "-1"})); err == nil {
+		t.Fatal("want error")
+	}
+}

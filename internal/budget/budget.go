@@ -131,6 +131,14 @@ func (b *Budget) Reserve(op string, s Stage) bool {
 	return true
 }
 
+// Allows는 지금 op를 s 용도로 부를 수 있는지다(세지 않는다).
+func (b *Budget) Allows(op string, s Stage) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.rollover()
+	return b.levelOf(b.counts[op]) < s.blockedAt()
+}
+
 // Level은 op의 현재 단계다.
 func (b *Budget) Level(op string) Level {
 	b.mu.Lock()

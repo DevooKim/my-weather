@@ -3,7 +3,7 @@
 // 하위 명령(이번 단계):
 //
 //	myweather migrate          DB 스키마를 최신으로 올린다
-//	myweather serve [--once]   수집기를 실행한다(HTTP API는 다음 단계). --once는 지금 할 일만 한 번 하고 끝낸다
+//	myweather serve [--once]   수집기와 HTTP API(MYWEATHER_LISTEN)를 함께 실행한다. --once는 수집만 한 번 하고 끝낸다
 //	myweather backup --to P    VACUUM INTO로 온라인 백업 + integrity_check
 //	myweather version          버전 출력 (빌드 때 -ldflags "-X main.version=..."로 주입)
 //
@@ -18,17 +18,23 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"myweather/internal/budget"
 	"myweather/internal/collector"
 	"myweather/internal/config"
+	"myweather/internal/grid"
+	"myweather/internal/httpapi"
 	"myweather/internal/kma"
 	"myweather/internal/kst"
+	"myweather/internal/ratelimit"
 	"myweather/internal/store"
 )
 
@@ -40,14 +46,18 @@ func usage() {
 
 commands:
   migrate          apply embedded SQL migrations to the DB
-  serve [--once]   run the KMA collector (--once: run due work once and exit)
+  serve [--once]   run the KMA collector and HTTP API (--once: collect due work once and exit, no HTTP)
   backup --to P    online backup (VACUUM INTO) + integrity_check
   version          print version
 
 environment:
   MYWEATHER_DB                DB file path (default ./var/myweather.sqlite3)
   MYWEATHER_GRIDS             grids "nx,ny;nx,ny" (default 61,125;59,126)
-  MYWEATHER_LISTEN            HTTP listen address (next stage; default 127.0.0.1:8080)
+  MYWEATHER_LISTEN            HTTP listen address (default 127.0.0.1:8080)
+  TRUSTED_IP_HEADER           client IP header, trusted only from MYWEATHER_TRUSTED_PROXIES (default X-Forwarded-For; "none" disables)
+  MYWEATHER_TRUSTED_PROXIES   comma-separated proxy CIDRs (default 127.0.0.0/8,::1/128)
+  MYWEATHER_ONDEMAND_BACKFILL_MAX  on-demand ncst backfill hours for non-collected grids, 0-23 (default 23)
+  MYWEATHER_ONDEMAND_PAST_MAX      on-demand past vilage bases for non-collected grids, 0-3 (default 3)
   KMA_SERVICE_KEY             data.go.kr serviceKey, encoded (default: api_key in MYWEATHER_ENV_FILE)
   MYWEATHER_ENV_FILE          file to read api_key from when KMA_SERVICE_KEY is unset (default .env)
   MYWEATHER_KMA_BASE_URL      KMA endpoint (default apis.data.go.kr)
@@ -161,17 +171,61 @@ func runServe(ctx context.Context, log *slog.Logger, args []string) error {
 	for i, g := range cfg.Grids {
 		grids[i] = g.String()
 	}
-	log.Info("myweather: collector starting", "version", version,
+	log.Info("myweather: starting", "version", version,
 		"db", cfg.DBPath, "grids", strings.Join(grids, ";"), "daily_limit_per_op", cfg.DailyLimit,
 		"startup_backfill", cfg.StartupBackfill, "once", *once, "calls_today", counts)
 
-	c := collector.New(db, api, b, collector.Options{Grids: cfg.Grids, StartupBackfill: cfg.StartupBackfill, Log: log})
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	c := collector.New(db, api, b, collector.Options{
+		Grids: cfg.Grids, StartupBackfill: cfg.StartupBackfill, Log: log,
+		Context: ctx, OnDemandBackfill: cfg.OnDemandBackfill, OnDemandPast: cfg.OnDemandPast,
+	})
 	if *once {
 		n := c.Step(ctx)
 		log.Info("myweather: once done", "calls", n, "budget", b.Snapshot().ByOp)
 		return nil
 	}
-	return c.Run(ctx)
+
+	regions, err := grid.Load()
+	if err != nil {
+		return err
+	}
+	api2 := httpapi.New(httpapi.Options{
+		DB: db, DBPath: cfg.DBPath, Collector: c, Budget: b, Regions: regions, Version: version, Log: log,
+		IP: &ratelimit.ClientIP{TrustHeader: cfg.TrustedIPHeader, Trusted: cfg.TrustedProxies, Log: log},
+	})
+	ln, err := net.Listen("tcp", cfg.Listen)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{
+		Handler:           api2.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
+	}
+	log.Info("myweather: http listening", "addr", ln.Addr().String(), "trusted_ip_header", cfg.TrustedIPHeader,
+		"trusted_proxies", fmt.Sprint(cfg.TrustedProxies),
+		"ondemand_backfill", cfg.OnDemandBackfill, "ondemand_past", cfg.OnDemandPast)
+
+	errc := make(chan error, 2)
+	go func() { errc <- c.Run(ctx) }()
+	go func() { errc <- srv.Serve(ln) }()
+	err = <-errc
+	cancel()
+	sctx, scancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer scancel()
+	if e := srv.Shutdown(sctx); e != nil && err == nil {
+		err = e
+	}
+	c.WaitBackground()
+	if errors.Is(err, http.ErrServerClosed) || errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }
 
 func runBackup(ctx context.Context, args []string) error {

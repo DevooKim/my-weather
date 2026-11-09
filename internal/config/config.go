@@ -1,16 +1,18 @@
 // Package config는 환경변수에서 설정을 읽는다.
 //
-// 이번 단계(수집기)에서 쓰는 값만 둔다. RP ID·VAPID 등은 다음 단계에서 추가한다.
+// 수집기·HTTP API에서 쓰는 값만 둔다. RP ID·VAPID 등은 인증·푸시 단계에서 추가한다.
 package config
 
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
 
 	"myweather/internal/kma"
+	"myweather/internal/ratelimit"
 )
 
 // Grid는 수집 대상 격자다.
@@ -20,7 +22,7 @@ func (g Grid) String() string { return fmt.Sprintf("%d,%d", g.NX, g.NY) }
 
 // Config는 프로세스 설정이다.
 type Config struct {
-	Listen          string // MYWEATHER_LISTEN (HTTP 서버는 다음 단계. 지금은 읽기만 한다)
+	Listen          string // MYWEATHER_LISTEN: HTTP API 주소
 	DBPath          string // MYWEATHER_DB
 	KMABaseURL      string // MYWEATHER_KMA_BASE_URL
 	Grids           []Grid // MYWEATHER_GRIDS
@@ -28,6 +30,11 @@ type Config struct {
 	StartupBackfill int    // MYWEATHER_OBS_BACKFILL_MAX: 시작할 때 격자당 실황 백필 최대 시각 수
 	EnvFile         string // MYWEATHER_ENV_FILE: 키를 환경변수로 주지 않았을 때 읽을 파일
 	keyFromEnv      string // KMA_SERVICE_KEY
+
+	TrustedIPHeader  string         // TRUSTED_IP_HEADER: 믿는 프록시에서 왔을 때만 보는 클라이언트 IP 헤더. "none"이면 쓰지 않음
+	TrustedProxies   []netip.Prefix // MYWEATHER_TRUSTED_PROXIES: 쉼표로 구분한 CIDR (기본 127.0.0.0/8,::1/128)
+	OnDemandBackfill int            // MYWEATHER_ONDEMAND_BACKFILL_MAX: 즉시 조회 2단계 실황 백필 최대 시각 수(0~23)
+	OnDemandPast     int            // MYWEATHER_ONDEMAND_PAST_MAX: 즉시 조회 3단계 과거 단기 발표분 최대 개수(0~3)
 }
 
 // 기본값
@@ -35,6 +42,7 @@ const (
 	DefaultDBPath = "./var/myweather.sqlite3"
 	DefaultListen = "127.0.0.1:8080"
 	DefaultGrids  = "61,125;59,126" // 역삼1동, 서교동
+	DefaultIPHdr  = "X-Forwarded-For"
 )
 
 // Load는 getenv(nil이면 os.Getenv)로 설정을 읽는다. 키는 LoadKey로 따로 읽는다.
@@ -67,6 +75,28 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if c.StartupBackfill > 23 {
 		c.StartupBackfill = 23 // API 보관 기간(24시간) 안의 지난 시각은 최대 23개
+	}
+	if c.OnDemandBackfill, err = atoiMin(get("MYWEATHER_ONDEMAND_BACKFILL_MAX", "23"), 0, "MYWEATHER_ONDEMAND_BACKFILL_MAX"); err != nil {
+		return c, err
+	}
+	if c.OnDemandBackfill > 23 {
+		c.OnDemandBackfill = 23
+	}
+	if c.OnDemandPast, err = atoiMin(get("MYWEATHER_ONDEMAND_PAST_MAX", "3"), 0, "MYWEATHER_ONDEMAND_PAST_MAX"); err != nil {
+		return c, err
+	}
+	if c.OnDemandPast > 3 {
+		c.OnDemandPast = 3
+	}
+	if c.TrustedProxies, err = ratelimit.ParsePrefixes(get("MYWEATHER_TRUSTED_PROXIES", ratelimit.DefaultTrustedProxies)); err != nil {
+		return c, fmt.Errorf("MYWEATHER_TRUSTED_PROXIES: %w", err)
+	}
+	if len(c.TrustedProxies) == 0 {
+		return c, errors.New("MYWEATHER_TRUSTED_PROXIES: empty")
+	}
+	c.TrustedIPHeader = get("TRUSTED_IP_HEADER", DefaultIPHdr)
+	if strings.EqualFold(c.TrustedIPHeader, "none") {
+		c.TrustedIPHeader = ""
 	}
 	return c, nil
 }

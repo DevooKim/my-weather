@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
+	"net"
+	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"myweather/internal/kma/kmatest"
 	"myweather/internal/store"
@@ -79,5 +84,52 @@ func TestServeRefusesNewerSchemaAndBackup(t *testing.T) {
 	}
 	if n := len(srv.Requests()); n != 0 {
 		t.Fatalf("no KMA calls expected, got %d", n)
+	}
+}
+
+// serve가 수집기와 HTTP를 함께 띄우고, ctx가 끝나면 정상 종료하는지(0.0.0.0 주소 포함).
+func TestServeHTTPStartsAndStops(t *testing.T) {
+	srv := kmatest.NewServer(nil)
+	defer srv.Close()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	t.Setenv("MYWEATHER_DB", filepath.Join(t.TempDir(), "s.sqlite3"))
+	t.Setenv("MYWEATHER_KMA_BASE_URL", srv.URL)
+	t.Setenv("KMA_SERVICE_KEY", kmatest.Key)
+	t.Setenv("MYWEATHER_GRIDS", "61,125")
+	t.Setenv("MYWEATHER_OBS_BACKFILL_MAX", "0")
+	t.Setenv("MYWEATHER_LISTEN", fmt.Sprintf("0.0.0.0:%d", port))
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runServe(ctx, log, nil) }()
+	var resp *http.Response
+	for i := 0; i < 50; i++ {
+		resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", port))
+		if err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(b), `"ok":true`) {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("serve did not stop")
 	}
 }

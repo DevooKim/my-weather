@@ -8,7 +8,7 @@
 //   - 단기예보는 첫 성공 1시간 뒤 1회 재수집한다. 재수집 여부는 DB(fcst_version)에서 유도하므로 재시작해도 유지된다.
 //   - 저장은 내용 해시로 중복 제거한다(store.SaveFcst / SaveObs).
 //
-// 이번 단계에는 즉시 조회(on-demand)가 없어서 singleflight는 같은 키의 동시 실행을 막는 데만 쓴다.
+// 즉시 조회(ondemand.go)와 정기 수집은 같은 flight 맵을 써서 같은 키를 한 번만 보낸다.
 package collector
 
 import (
@@ -63,6 +63,11 @@ type Options struct {
 	StartupBackfill int              // 시작할 때 격자당 실황 백필 최대 시각 수 (0~23)
 	Now             func() time.Time // nil이면 kst.Now. 테스트는 가짜 시계를 넣는다
 	Log             *slog.Logger
+
+	// 즉시 조회(ondemand.go)
+	Context          context.Context // 즉시 조회 호출에 쓸 서버 수명 ctx. nil이면 Background
+	OnDemandBackfill int             // 2단계 실황 백필 최대 시각 수 (0이면 건너뜀)
+	OnDemandPast     int             // 3단계 과거 단기 발표분 최대 개수 (0이면 건너뜀)
 }
 
 type key struct {
@@ -98,7 +103,9 @@ type Collector struct {
 	fallbackTried map[key]bool      // 이 프로세스에서 대체용으로 조회한 이전 발표분 (실패해도 다시 하지 않음)
 	refetchDue    map[key]time.Time // 아직 때가 안 된 재수집 (다음 깨울 시각 계산용)
 	backfillHour  map[config.Grid]int64
-	inflight      map[key]bool
+	inflight      map[key]*flight // 진행 중인 호출. 같은 키는 한 번만 보내고 결과를 나눈다(singleflight)
+
+	od odState // 즉시 조회 상태 (ondemand.go)
 }
 
 // New는 수집기를 만든다.
@@ -122,7 +129,8 @@ func New(db *store.DB, api Fetcher, b *budget.Budget, opt Options) *Collector {
 		fallbackTried: map[key]bool{},
 		refetchDue:    map[key]time.Time{},
 		backfillHour:  map[config.Grid]int64{},
-		inflight:      map[key]bool{},
+		inflight:      map[key]*flight{},
+		od:            newOdState(),
 	}
 }
 
@@ -218,7 +226,7 @@ func (c *Collector) plan(ctx context.Context, now time.Time, first bool) []task 
 			if op == kma.OpVilage {
 				for _, b := range []time.Time{cur, k.Prev(cur)} {
 					rk := key{op, g.NX, g.NY, kst.ToInt(b)}
-					if c.refetchTried[rk] || c.inflight[rk] {
+					if c.refetchTried[rk] || c.inflight[rk] != nil {
 						continue
 					}
 					due, ok, err := c.refetchDueAt(ctx, rk)
@@ -253,7 +261,7 @@ func (c *Collector) plan(ctx context.Context, now time.Time, first bool) []task 
 	seen := map[key]bool{}
 	out := tasks[:0]
 	for _, t := range tasks {
-		if seen[t.key] || c.inflight[t.key] {
+		if seen[t.key] || c.inflight[t.key] != nil {
 			continue
 		}
 		seen[t.key] = true
@@ -296,7 +304,7 @@ func (c *Collector) fallbackTask(ctx context.Context, op kma.Op, g config.Grid, 
 		}
 	}
 	for _, pk := range []key{p1, p2} {
-		if !c.fallbackTried[pk] && !c.inflight[pk] {
+		if !c.fallbackTried[pk] && c.inflight[pk] == nil {
 			return task{pk, TrigFallback}, true
 		}
 	}
@@ -366,33 +374,20 @@ func (c *Collector) NextWake(now time.Time) time.Time {
 }
 
 // exec는 작업 하나를 실행한다. 실제로 KMA를 불렀으면 true.
+// 같은 키가 이미 진행 중이면(즉시 조회 포함) 건너뛴다. 다음 Step에서 저장 여부를 다시 본다.
 func (c *Collector) exec(ctx context.Context, t task) bool {
 	c.mu.Lock()
-	if c.inflight[t.key] {
+	if c.inflight[t.key] != nil {
 		c.mu.Unlock()
 		return false
 	}
-	c.inflight[t.key] = true
+	f := &flight{done: make(chan struct{})}
+	c.inflight[t.key] = f
 	c.mu.Unlock()
-	defer func() {
-		c.mu.Lock()
-		delete(c.inflight, t.key)
-		c.mu.Unlock()
-	}()
+	defer c.land(t.key, f)
 
 	op := string(t.op)
 	logArgs := []any{"op", op, "nx", t.nx, "ny", t.ny, "base", t.base, "trigger", t.trigger}
-	if !c.budget.Reserve(op, budget.Favorite) {
-		c.log.Warn("collector: daily budget exhausted, skipped", logArgs...)
-		c.mu.Lock()
-		if t.trigger == TrigSchedule || t.trigger == TrigStartup || t.trigger == TrigRetry {
-			st := c.state(t.key)
-			st.nextAt = c.opt.Now().Add(15 * time.Minute)
-		}
-		c.mu.Unlock()
-		return false
-	}
-
 	if t.trigger == TrigRefetch || t.trigger == TrigFallback {
 		c.mu.Lock()
 		if t.trigger == TrigRefetch {
@@ -402,25 +397,17 @@ func (c *Collector) exec(ctx context.Context, t task) bool {
 		}
 		c.mu.Unlock()
 	}
-	calledAt := c.opt.Now()
-	res := c.api.Fetch(ctx, t.op, t.nx, t.ny, kst.FromInt(t.base))
-	outcome := store.OutcomeFailed
-	errText := res.Err
-	ver := 0
-	if res.OK() {
-		var err error
-		outcome, ver, err = c.save(ctx, t, res, calledAt)
-		if err != nil {
-			outcome, errText = store.OutcomeFailed, "store: "+err.Error()
-			c.log.Error("collector: save failed", append(logArgs, "err", err)...)
+	res, outcome, errText, ver, called := c.call(ctx, t, budget.Favorite)
+	f.ok, f.called, f.code = outcome != store.OutcomeFailed && called, called, res.Code
+	if !called {
+		c.log.Warn("collector: daily budget exhausted, skipped", logArgs...)
+		c.mu.Lock()
+		if t.trigger == TrigSchedule || t.trigger == TrigStartup || t.trigger == TrigRetry {
+			st := c.state(t.key)
+			st.nextAt = c.opt.Now().Add(15 * time.Minute)
 		}
-	}
-	if err := c.db.LogCall(ctx, store.Call{
-		CalledAt: calledAt, Op: op, NX: t.nx, NY: t.ny, Base: t.base, Trigger: t.trigger,
-		HTTPStatus: res.HTTPStatus, ResultCode: res.Code, NItems: res.NItems, TotalCount: res.TotalCount,
-		Ms: res.Duration.Milliseconds(), Outcome: outcome, Err: errText,
-	}); err != nil {
-		c.log.Error("collector: kma_call insert failed", append(logArgs, "err", err)...)
+		c.mu.Unlock()
+		return false
 	}
 
 	ok := outcome != store.OutcomeFailed
@@ -456,6 +443,50 @@ func (c *Collector) exec(ctx context.Context, t task) bool {
 		}
 	}
 	return true
+}
+
+// flight는 진행 중인 호출 하나다. done이 닫히면 결과 필드를 읽을 수 있다.
+type flight struct {
+	done   chan struct{}
+	ok     bool   // 저장까지 성공
+	called bool   // 실제로 KMA를 불렀음 (예산에 막히면 false)
+	code   string // kma 결과 코드
+}
+
+func (c *Collector) land(k key, f *flight) {
+	c.mu.Lock()
+	delete(c.inflight, k)
+	c.mu.Unlock()
+	close(f.done)
+}
+
+// call은 예산 확인 → KMA 호출 → 저장 → kma_call 기록을 한다. 예산에 막히면 called=false(기록 없음).
+func (c *Collector) call(ctx context.Context, t task, stage budget.Stage) (res kma.Result, outcome, errText string, ver int, called bool) {
+	op := string(t.op)
+	if !c.budget.Reserve(op, stage) {
+		return kma.Result{}, store.OutcomeFailed, "", 0, false
+	}
+	logArgs := []any{"op", op, "nx", t.nx, "ny", t.ny, "base", t.base, "trigger", t.trigger}
+	calledAt := c.opt.Now()
+	res = c.api.Fetch(ctx, t.op, t.nx, t.ny, kst.FromInt(t.base))
+	outcome = store.OutcomeFailed
+	errText = res.Err
+	if res.OK() {
+		var err error
+		outcome, ver, err = c.save(ctx, t, res, calledAt)
+		if err != nil {
+			outcome, errText = store.OutcomeFailed, "store: "+err.Error()
+			c.log.Error("collector: save failed", append(logArgs, "err", err)...)
+		}
+	}
+	if err := c.db.LogCall(ctx, store.Call{
+		CalledAt: calledAt, Op: op, NX: t.nx, NY: t.ny, Base: t.base, Trigger: t.trigger,
+		HTTPStatus: res.HTTPStatus, ResultCode: res.Code, NItems: res.NItems, TotalCount: res.TotalCount,
+		Ms: res.Duration.Milliseconds(), Outcome: outcome, Err: errText,
+	}); err != nil {
+		c.log.Error("collector: kma_call insert failed", append(logArgs, "err", err)...)
+	}
+	return res, outcome, errText, ver, true
 }
 
 func (c *Collector) state(k key) *jobState {
