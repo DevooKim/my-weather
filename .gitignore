@@ -1,0 +1,17 @@
+# secrets
+.env
+deploy/.env
+# data
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+var/
+collector/*.log
+collector/*.pid
+collector/report.html
+# build
+internal/webui/dist/
+web/node_modules/
+web/build/
+web/.svelte-kit/
+/myweather
