@@ -1,5 +1,5 @@
 <script lang="ts">
-	// 배경 모션: 비·눈(세기=강수량, 기울기=바람), 해·달(위상). 구름 모션 없음.
+	// 배경 모션: 비·눈(세기=강수량, 기울기=바람), 해·달(위상), 구름(구름 많음일 때만, 바람 방향으로 천천히 흐름).
 	// prefers-reduced-motion이면 움직이지 않는 한 장면만 그린다.
 	import type { Scene } from '$lib/scene';
 	import { MOON_DIAMETER, MOON_VIEWBOX, moonSvg } from '$lib/moon';
@@ -12,6 +12,8 @@
 	let canvas: HTMLCanvasElement | undefined = $state();
 
 	type P = { x: number; y: number; z: number; s: number };
+	/** 구름 하나: 미리 그려 둔 그림(sp)을 x로 흘린다. z가 클수록 가깝다(크고 빠름) */
+	type C = { x: number; y: number; z: number; sp: HTMLCanvasElement; sw: number; sh: number };
 
 	onMount(() => {
 		const cv = canvas!;
@@ -24,7 +26,8 @@
 			raf = 0,
 			last = 0,
 			visible = true,
-			parts: P[] = [];
+			parts: P[] = [],
+			clouds: C[] = [];
 
 		const count = () => {
 			const sc = scene;
@@ -42,7 +45,106 @@
 		const reset = () => {
 			const n = count();
 			parts = Array.from({ length: n }, () => spawn(true));
+			resetClouds();
 		};
+
+		// 구름: 적운 모양. 가운데 큰 봉우리와 양옆 어깨를 겹치고, 바닥은 평평하게 잘라 아래로 흐려지게 한다.
+		// 미리 한 장으로 그려 두고 프레임마다 drawImage만 한다.
+		function cloudSprite(cw: number): { sp: HTMLCanvasElement; sw: number; sh: number } {
+			const ch = cw * 0.55;
+			const sp = document.createElement('canvas');
+			sp.width = Math.ceil(cw * dpr);
+			sp.height = Math.ceil(ch * dpr);
+			const c = sp.getContext('2d')!;
+			c.scale(dpr, dpr);
+			const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+			const puff = (x: number, y: number, r: number) => {
+				const g = c.createRadialGradient(x, y - r * 0.15, r * 0.55, x, y, r);
+				g.addColorStop(0, 'rgba(255,255,255,1)');
+				g.addColorStop(1, 'rgba(255,255,255,0)');
+				c.fillStyle = g;
+				c.beginPath();
+				c.arc(x, y, r, 0, Math.PI * 2);
+				c.fill();
+			};
+			const base = ch * 0.78; // 바닥선
+			// 봉우리: 가운데(가장 큼)를 조금 한쪽으로 치우치게 하고, 양옆으로 갈수록 작고 낮게
+			const peak = rnd(0.42, 0.58);
+			const domes: [number, number][] = [
+				[peak, rnd(0.4, 0.46)],
+				[peak - rnd(0.2, 0.26), rnd(0.28, 0.34)],
+				[peak + rnd(0.2, 0.26), rnd(0.26, 0.32)],
+				[peak - rnd(0.36, 0.42), rnd(0.16, 0.2)],
+				[peak + rnd(0.36, 0.42), rnd(0.15, 0.19)]
+			];
+			for (const [fx, fr] of domes) {
+				const r = ch * fr;
+				// 가운데로 모아 가장자리 덩이가 그림 밖으로 잘리지 않게
+				puff(cw * (0.5 + (fx - 0.5) * 0.75), base - r * 0.55, r);
+			}
+			// 몸통을 채우는 낮고 넓은 덩이
+			for (let i = 0; i < 4; i++) puff(cw * (0.22 + i * 0.19), base - ch * 0.12, ch * 0.2);
+			// 바닥: 아래쪽을 평평하게 자르고 살짝 흐리게
+			c.globalCompositeOperation = 'destination-in';
+			const m = c.createLinearGradient(0, 0, 0, ch);
+			m.addColorStop(0, 'rgba(0,0,0,1)');
+			m.addColorStop(base / ch - 0.08, 'rgba(0,0,0,1)');
+			m.addColorStop(base / ch + 0.04, 'rgba(0,0,0,0)');
+			c.fillStyle = m;
+			c.fillRect(0, 0, cw, ch);
+			// 아랫부분을 조금 어둡게(입체감)
+			c.globalCompositeOperation = 'source-atop';
+			const sh = c.createLinearGradient(0, ch * 0.3, 0, base);
+			sh.addColorStop(0, 'rgba(0,0,0,0)');
+			sh.addColorStop(1, 'rgba(60,70,90,0.35)');
+			c.fillStyle = sh;
+			c.fillRect(0, 0, cw, ch);
+			c.globalCompositeOperation = 'source-over';
+			return { sp, sw: cw, sh: ch };
+		}
+		const cloudCount = () => {
+			if (scene.kind !== 'partly') return 0;
+			return Math.max(2, Math.round(3 * Math.min(1.6, Math.max(0.6, w / 390))));
+		};
+		const spawnCloud = (anyX: boolean): C => {
+			const z = 0.4 + Math.random() * 0.6;
+			const base = Math.min(w, 520);
+			const spr = cloudSprite(base * (0.35 + 0.35 * z));
+			const dir = cloudVx() >= 0 ? 1 : -1;
+			return {
+				z,
+				...spr,
+				x: anyX ? Math.random() * (w + spr.sw) - spr.sw : dir > 0 ? -spr.sw : w,
+				y: Math.random() * Math.min(h * 0.45, 260) - spr.sh * 0.3
+			};
+		};
+		function resetClouds() {
+			if (!w || !h) return;
+			clouds = Array.from({ length: cloudCount() }, () => spawnCloud(true)).sort((a, b) => a.z - b.z);
+		}
+		/** 구름 속도(px/s): 동서 바람을 따르되 아주 느리게. 바람이 없으면 오른쪽으로 살짝 */
+		const cloudVx = () => {
+			const u = Math.max(-12, Math.min(12, scene.u));
+			return Math.abs(u) < 0.5 ? 5 : u * 3;
+		};
+		function drawClouds(dt: number) {
+			if (!clouds.length) return;
+			const sc = scene;
+			const night = sc.light === 'night';
+			// 밤에는 어둡게(흰 구름 위에 색을 덮는 대신 투명도를 낮춘다)
+			const a = 0.26 * (night ? 0.6 : 1);
+			const vx = cloudVx();
+			const c = ctx!;
+			for (let i = 0; i < clouds.length; i++) {
+				const cl = clouds[i];
+				cl.x += vx * (0.5 + cl.z) * dt;
+				if (vx > 0 && cl.x > w) Object.assign(cl, spawnCloud(false));
+				else if (vx < 0 && cl.x < -cl.sw) Object.assign(cl, spawnCloud(false));
+				c.globalAlpha = a * (0.6 + 0.4 * cl.z);
+				c.drawImage(cl.sp, cl.x, cl.y, cl.sw, cl.sh);
+			}
+			c.globalAlpha = 1;
+		}
 		const resize = () => {
 			const r = cv.getBoundingClientRect();
 			const nd = Math.min(2, window.devicePixelRatio || 1);
@@ -60,6 +162,7 @@
 			ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 			if (first) reset();
 			else {
+				resetClouds();
 				// 입자를 버리지 않고 새 크기에 맞춰 옮긴 뒤 개수만 맞춘다(크기가 바뀌어도 비가 튀지 않게)
 				for (const p of parts) {
 					p.x = (p.x / Math.max(1, ow)) * w;
@@ -117,6 +220,7 @@
 			const sc = scene;
 			ctx!.clearRect(0, 0, w, h);
 			drawSky();
+			drawClouds(dt);
 			if (!parts.length) return;
 			const snow = sc.kind === 'snow';
 			const mixed = sc.kind === 'mixed';
@@ -159,7 +263,7 @@
 			const dt = last ? Math.min(0.05, (t - last) / 1000) : 0.016;
 			last = t;
 			draw(dt);
-			if (parts.length) raf = requestAnimationFrame(frame);
+			if (parts.length || clouds.length) raf = requestAnimationFrame(frame);
 		}
 		const start = () => {
 			if (raf || mq.matches) {
@@ -167,7 +271,7 @@
 				return;
 			}
 			last = 0;
-			if (parts.length) raf = requestAnimationFrame(frame);
+			if (parts.length || clouds.length) raf = requestAnimationFrame(frame);
 			else draw(0);
 		};
 		const stop = () => {
