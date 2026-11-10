@@ -36,10 +36,9 @@
 	const yText = $derived.by(() => {
 		if (!yesterday || !s || s.tmp == null) return '';
 		const d = Math.round(s.tmp - yesterday.tmp);
-		const est = yesterday.est ? '(추정)' : '';
-		if (isNow) return `어제 같은 시각${est} ${deg(yesterday.tmp)}`;
-		if (d === 0) return `어제 같은 시각${est}과 비슷함`;
-		return `어제 같은 시각${est}보다 ${Math.abs(d)}° ${d > 0 ? '높음' : '낮음'}`;
+		if (isNow) return `어제 같은 시각 ${deg(yesterday.tmp)}`;
+		if (d === 0) return '어제 같은 시각과 비슷함';
+		return `어제 같은 시각보다 ${Math.abs(d)}° ${d > 0 ? '높음' : '낮음'}`;
 	});
 	const popText = $derived(
 		s?.pop != null ? `강수확률 ${s.pop}%` : ''

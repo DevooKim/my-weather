@@ -29,7 +29,7 @@
 						? ` 강수확률 ${d.pop_max}%`
 						: ''}. 타임라인에서 보기"
 				>
-					<span class="label">{label}{d.estimated && !today ? ' (추정)' : ''}</span>
+					<span class="label">{label}</span>
 					<span class="icon"><Icon name={icon} size={22} color={iconColor(icon)} /></span>
 					<span class="pop">{d.pop_max != null && d.pop_max > 0 ? `${d.pop_max}%` : ''}</span>
 					<span class="min">{deg(d.tmin)}</span>

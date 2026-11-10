@@ -354,7 +354,7 @@ func TestNonFavoritePastEstimated(t *testing.T) {
 	if y := tl.Summary.Yesterday; y == nil || !y.Estimated {
 		t.Fatalf("yesterday same hour should be estimated: %+v", y)
 	}
-	if !strings.Contains(tl.Summary.Text[0], "(추정)") {
+	if strings.Contains(tl.Summary.Text[0], "추정") {
 		t.Fatalf("text %q", tl.Summary.Text)
 	}
 	if d := tl.Daily[0]; d.Label != "어제" || !d.Estimated {

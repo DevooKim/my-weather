@@ -124,9 +124,6 @@ func summarize(order []*hour, get func(time.Time) *hour, now, nowHour time.Time)
 		line := fmt.Sprintf("지금 %d℃", int(math.Round(*nh.tmp)))
 		if s.DiffTmp != nil {
 			y := "어제 이 시간"
-			if s.Yesterday.Estimated {
-				y += "(추정)"
-			}
 			n := int(math.Round(math.Abs(*s.DiffTmp)))
 			switch {
 			case n == 0:
