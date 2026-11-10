@@ -17,7 +17,6 @@
 	import { onMount, tick } from 'svelte';
 
 	let vh = $state(844);
-	let scrollY = $state(0);
 	let desktop = $state(false);
 
 	onMount(() => {
@@ -30,16 +29,6 @@
 		upd();
 		mq.addEventListener('change', upd);
 		window.addEventListener('resize', upd);
-		// 스크롤 이벤트마다가 아니라 화면을 그릴 때 한 번만 머리 높이를 갱신한다
-		let sraf = 0;
-		const onScroll = () => {
-			if (sraf) return;
-			sraf = requestAnimationFrame(() => {
-				sraf = 0;
-				scrollY = Math.max(0, window.scrollY);
-			});
-		};
-		window.addEventListener('scroll', onScroll, { passive: true });
 		const onPop = () => {
 			if (app.settingsOpen) app.settingsOpen = false;
 		};
@@ -47,8 +36,6 @@
 		return () => {
 			mq.removeEventListener('change', upd);
 			window.removeEventListener('resize', upd);
-			window.removeEventListener('scroll', onScroll);
-			if (sraf) cancelAnimationFrame(sraf);
 			window.removeEventListener('popstate', onPop);
 		};
 	});
@@ -57,7 +44,6 @@
 	const H1A = $derived(Math.round(Math.min(460, Math.max(340, vh * 0.51))));
 	const H1C = 172;
 	const BAR = 56;
-	const heroH = $derived(Math.max(BAR, H1A - scrollY));
 
 	const scene = $derived(sceneOf(app.timeline));
 	$effect(() => {
@@ -246,16 +232,14 @@
 	</div>
 {:else}
 	<Hero
-		h={heroH}
 		full={H1A}
-		compact={H1C}
 		bar={BAR}
 		{scene}
 		onplace={() => (app.sheetOpen = true)}
 		onmenu={menu}
 	/>
 	<!-- min-height: 내용이 짧아도 머리가 한 줄이 될 만큼 내릴 수 있게 -->
-	<div class="phone" style="padding-top:{H1A}px; min-height:{H1A + vh - BAR}px">
+	<div class="phone" style="min-height:{vh - BAR}px">
 		{@render states()}
 		{#if tl}
 			<section class="tl">
