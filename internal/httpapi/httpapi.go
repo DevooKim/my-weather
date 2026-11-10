@@ -32,10 +32,12 @@ import (
 	"strings"
 	"time"
 
+	"myweather/internal/air"
 	"myweather/internal/alert"
 	"myweather/internal/auth"
 	"myweather/internal/budget"
 	"myweather/internal/collector"
+	"myweather/internal/fog"
 	"myweather/internal/grid"
 	"myweather/internal/kma"
 	"myweather/internal/kst"
@@ -58,6 +60,8 @@ type Options struct {
 	Now       func() time.Time // nil이면 kst.Now
 	Log       *slog.Logger
 
+	Air   *air.Client  // nil이면 타임라인에 미세먼지(air)를 넣지 않는다
+	Fog   *fog.Client  // nil이면 타임라인에 안개(fog)를 넣지 않는다
 	Auth  *auth.Auth   // nil이면 인증·관리자 API는 503
 	Push  *push.Sender // nil이면 푸시 API는 503
 	Rules alert.Rules  // 알림 설정 화면에 보여 줄 기준값 (0값이면 alert.DefaultRules)
@@ -475,6 +479,21 @@ func (s *Server) place(r *http.Request) (timeline.Place, error) {
 	return p, nil
 }
 
+// airNow는 장소의 지금 미세먼지다. 측정소를 처음 찾거나 새 자료를 받을 때만 에어코리아를 부르고,
+// 늦어도 타임라인 응답을 오래 붙잡지 않게 3초에서 끊는다.
+func (s *Server) airNow(ctx context.Context, p timeline.Place) *air.Now {
+	if s.o.Air == nil {
+		return nil
+	}
+	key := p.Region
+	if key == "" {
+		key = fmt.Sprintf("g%d,%d", p.NX, p.NY)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return s.o.Air.Get(ctx, air.Place{Code: key, Lat: p.Lat, Lon: p.Lon})
+}
+
 // favPlace는 ?fav=id(관리자)의 장소다. 이름은 즐겨찾기 이름.
 func (s *Server) favPlace(w http.ResponseWriter, r *http.Request) (timeline.Place, bool) {
 	if _, ok := s.session(w, r); !ok {
@@ -572,6 +591,12 @@ func (s *Server) timeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tl := timeline.Build(in)
+	tl.Air = s.airNow(ctx, place)
+	if s.o.Fog != nil {
+		fctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		tl.Fog = s.o.Fog.Get(fctx, place.Lat, place.Lon)
+		cancel()
+	}
 	tl.Complete = ens.Complete
 	if !ens.Complete {
 		sec := int(math.Ceil(ens.RetryAfter.Seconds()))

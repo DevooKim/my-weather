@@ -29,11 +29,13 @@ import (
 	"syscall"
 	"time"
 
+	"myweather/internal/air"
 	"myweather/internal/alert"
 	"myweather/internal/auth"
 	"myweather/internal/budget"
 	"myweather/internal/collector"
 	"myweather/internal/config"
+	"myweather/internal/fog"
 	"myweather/internal/grid"
 	"myweather/internal/httpapi"
 	"myweather/internal/kma"
@@ -249,13 +251,18 @@ func runServe(ctx context.Context, log *slog.Logger, args []string) error {
 	}
 	hopt := httpapi.Options{
 		DB: db, DBPath: cfg.DBPath, Collector: c, Budget: b, Regions: regions, Version: version, Log: log,
-		IP: &ratelimit.ClientIP{TrustHeader: cfg.TrustedIPHeader, Trusted: cfg.TrustedProxies, Log: log},
+		Air: air.New("", key, log),
+		Fog: fog.New("", cfg.LoadAPIHubKey(), log),
+		IP:  &ratelimit.ClientIP{TrustHeader: cfg.TrustedIPHeader, Trusted: cfg.TrustedProxies, Log: log},
 	}
 	if au != nil {
 		hopt.Auth = au
 	}
 	if sender != nil {
 		hopt.Push = sender
+	}
+	if hopt.Fog == nil {
+		log.Warn("myweather: apihub_key not set, fog disabled")
 	}
 	api2 := httpapi.New(hopt)
 	ln, err := net.Listen("tcp", cfg.Listen)

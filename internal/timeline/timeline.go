@@ -21,7 +21,9 @@ import (
 	"strconv"
 	"time"
 
+	"myweather/internal/air"
 	"myweather/internal/astro"
+	"myweather/internal/fog"
 	"myweather/internal/kma/value"
 	"myweather/internal/kst"
 	"myweather/internal/store"
@@ -80,7 +82,11 @@ type Timeline struct {
 	Slots       []Slot            `json:"slots"`
 	Summary     Summary           `json:"summary"`
 	Daily       []Day             `json:"daily"`
-	Warnings    []string          `json:"warnings"`
+	// Air는 가까운 측정소의 지금 미세먼지(에어코리아). 모르면 null. HTTP 층에서 채운다.
+	Air *air.Now `json:"air"`
+	// Fog는 가까운 AWS 시정 관측소(15km 안)의 지금 안개 여부. 모르면 null. HTTP 층에서 채운다.
+	Fog      *fog.Now `json:"fog"`
+	Warnings []string `json:"warnings"`
 }
 
 // Range는 타임라인 범위다.
@@ -132,17 +138,19 @@ type Slot struct {
 	Sky   *string   `json:"sky"`
 	Pty   *string   `json:"pty"`
 	// Wet은 비·눈으로 그릴지다. 초단기 강수형태 5·6·7(빗방울·날림)은 pty 이름은 남기되 wet=false다(Q1).
-	Wet       bool     `json:"wet"`
-	Pcp       *Amount  `json:"pcp"`
-	Pop       *int     `json:"pop"`
-	Reh       *float64 `json:"reh"`
-	Wsd       *float64 `json:"wsd"`
-	WsdCode   *int     `json:"wsd_code,omitempty"`
-	Vec       *float64 `json:"vec"`
-	Dir16     *string  `json:"dir16"`
-	Uuu       *float64 `json:"uuu"`
-	Vvv       *float64 `json:"vvv"`
-	Sno       *Amount  `json:"sno"`
+	Wet     bool     `json:"wet"`
+	Pcp     *Amount  `json:"pcp"`
+	Pop     *int     `json:"pop"`
+	Reh     *float64 `json:"reh"`
+	Wsd     *float64 `json:"wsd"`
+	WsdCode *int     `json:"wsd_code,omitempty"`
+	Vec     *float64 `json:"vec"`
+	Dir16   *string  `json:"dir16"`
+	Uuu     *float64 `json:"uuu"`
+	Vvv     *float64 `json:"vvv"`
+	Sno     *Amount  `json:"sno"`
+	// Lgt는 초단기예보 낙뢰(LGT) 값이다. 0보다 크면 낙뢰 예상. 초단기예보가 덮는 지금~6시간 칸에만 있고 나머지는 null.
+	Lgt       *float64 `json:"lgt"`
 	Src       SlotSrc  `json:"src"`
 	Estimated bool     `json:"estimated"`
 	Partial   bool     `json:"partial"`
@@ -167,7 +175,9 @@ type hour struct {
 	sno      *value.Amount
 	tmn, tmx *float64
 	skySrc   string
-	ext      bool // 단기예보 연장 구간(3시간 간격, 코드값)
+
+	lgt *float64 // 초단기예보 낙뢰(지금 이후 시각만)
+	ext bool     // 단기예보 연장 구간(3시간 간격, 코드값)
 }
 
 func (h *hour) hasObs() bool { return h.tmp != nil || h.pty >= 0 }
@@ -343,6 +353,17 @@ func Build(in Input) *Timeline {
 				h.fillUltra(ult, um, vs, vm)
 			} else if vs != nil {
 				h.fillVilage(vs, vm, false)
+			}
+		}
+		// 낙뢰: 실황·단기예보에는 없고 초단기예보에만 있다. 지금 칸은 실황으로 채우므로 초단기 값을 따로 얹는다
+		// (지금 시각을 덮지 않으면 다음 시각 값).
+		if !t.Before(nowHour) {
+			um := ultraAt(ult, t)
+			if um == nil && t.Equal(nowHour) {
+				um = ultraAt(ult, t.Add(time.Hour))
+			}
+			if um != nil {
+				h.lgt = pf(um, "LGT")
 			}
 		}
 		for _, k := range []string{h.obsSrc, h.pcpSrc} {
@@ -532,6 +553,7 @@ func single(h *hour, t time.Time, phase string) Slot {
 		s.Sky = strp(n)
 	}
 	s.Pop = h.pop
+	s.Lgt = h.lgt
 	s.Src = SlotSrc{Obs: h.obsSrc, Pcp: h.pcpSrc, Sky: h.skySrc}
 	s.Estimated = h.estimated
 	s.Feels = feelsOf(h)
@@ -603,6 +625,10 @@ func aggregate(get func(time.Time) *hour, t time.Time, phase string) Slot {
 		if h.pop != nil && (pop == nil || *h.pop > *pop) {
 			v := *h.pop
 			pop = &v
+		}
+		if h.lgt != nil && (s.Lgt == nil || *h.lgt > *s.Lgt) {
+			v := *h.lgt
+			s.Lgt = &v
 		}
 		if h.obsSrc != s.Src.Obs || h.skySrc != s.Src.Sky || h.pcpSrc != s.Src.Pcp {
 			s.Partial = true

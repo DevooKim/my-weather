@@ -257,3 +257,22 @@ func ReadKV(path string) (map[string]string, error) {
 	}
 	return out, nil
 }
+
+// LoadAPIHubKey는 기상청 API허브 authKey(안개 시정 자료용)를 읽는다. APIHUB_KEY가 우선이고,
+// 없으면 EnvFile의 apihub_key. 없으면 빈 값(안개 정보 없이 동작). 값은 출력하지 않는다.
+func (c Config) LoadAPIHubKey() string {
+	if v := strings.TrimSpace(os.Getenv("APIHUB_KEY")); v != "" {
+		return v
+	}
+	b, err := os.ReadFile(c.EnvFile)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if ok && strings.TrimSpace(k) == "apihub_key" {
+			return strings.Trim(strings.TrimSpace(strings.TrimRight(v, "\r")), `"'`)
+		}
+	}
+	return ""
+}

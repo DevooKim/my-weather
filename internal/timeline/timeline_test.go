@@ -584,3 +584,37 @@ func TestEmptyInput(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestLightning(t *testing.T) {
+	// 초단기 14:30 발표분은 15~20시를 덮는다. 지금(14시) 칸은 실황이라 다음 시각(15시) 낙뢰 값을 빌린다.
+	now := at("2026-11-10 14:50")
+	in := favInput(now)
+	in.Ultra = []Fcst{ultra(at("2026-11-10 14:30"), func(t time.Time, c string) string {
+		if c == "LGT" {
+			if t.Hour() == 15 {
+				return "2"
+			}
+			return "0"
+		}
+		return ""
+	})}
+	tl := Build(in)
+	val := func(s string) string {
+		sl := slotAt(t, tl, s)
+		if sl.Lgt == nil {
+			return "nil"
+		}
+		return fmt.Sprint(*sl.Lgt)
+	}
+	for s, want := range map[string]string{
+		"2026-11-10 14:00": "2", // 지금: 다음 시각 값
+		"2026-11-10 15:00": "2",
+		"2026-11-10 16:00": "0",
+		"2026-11-10 12:00": "nil", // 지난 칸
+		"2026-11-11 06:00": "nil", // 초단기 밖
+	} {
+		if got := val(s); got != want {
+			t.Errorf("%s lgt=%s, want %s", s, got, want)
+		}
+	}
+}
