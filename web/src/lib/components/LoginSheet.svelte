@@ -83,9 +83,6 @@
 			</button>
 		</form>
 		{#if err}<p class="err" role="alert">{err}</p>{/if}
-		<p class="hint">
-			코드 받기: 서버에서 <code>myweather enroll-token</code> 실행. 코드는 10분 뒤 만료되고 한 번만 쓸 수 있습니다.
-		</p>
 	</div>
 </Sheet>
 
@@ -171,16 +168,5 @@
 		margin: 0;
 		font-size: 14px;
 		color: var(--danger-text);
-	}
-	.hint {
-		margin: 0;
-		font-size: 12px;
-		color: var(--text-3);
-	}
-	code {
-		font-family: ui-monospace, monospace;
-		background: var(--surface-2);
-		padding: 1px 4px;
-		border-radius: 4px;
 	}
 </style>
