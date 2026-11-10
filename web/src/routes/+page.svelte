@@ -219,7 +219,7 @@
 						{tl}
 						selected={selIdx}
 						meteo={true}
-						cw={40}
+						cw={46}
 						onselect={selectSlot}
 						onhover={(i) => (hoverIdx = i)}
 					/>

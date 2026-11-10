@@ -8,7 +8,7 @@
 		tl,
 		selected,
 		meteo = false,
-		cw = 44,
+		cw = 52,
 		onselect,
 		onhover
 	}: {
@@ -34,17 +34,17 @@
 	});
 
 	// 세로 배치
-	const TAG = 18,
-		DAY = 20,
-		ICON = 30,
-		CHART = 64,
-		TEMP = 18,
-		PCP = 36,
-		POP = 20,
-		ARW = 24,
-		WND = 18,
-		HUM = 20,
-		HOUR = 20;
+	const TAG = 20,
+		DAY = 22,
+		ICON = 38,
+		CHART = 96,
+		TEMP = 22,
+		PCP = 40,
+		POP = 22,
+		ARW = 26,
+		WND = 20,
+		HUM = 22,
+		HOUR = 24;
 	const yDay = TAG;
 	const yIcon = yDay + DAY;
 	const yChart = yIcon + ICON;
@@ -205,18 +205,18 @@
 
 		<!-- 지금 세로선 -->
 		<line x1={nowX} x2={nowX} y1={2} y2={H} stroke="var(--accent)" stroke-width="2" />
-		<rect x={Math.max(0, nowX - 15)} y="1" width="30" height="16" rx="4" fill="#2A72E5" />
-		<text x={Math.max(15, nowX)} y="13" text-anchor="middle" class="tag">지금</text>
+		<rect x={Math.max(0, nowX - 17)} y="1" width="34" height="18" rx="4" fill="#2A72E5" />
+		<text x={Math.max(17, nowX)} y="14.5" text-anchor="middle" class="tag">지금</text>
 
 		{#each cols as c (c.i)}
 			{#if c.dayLabel}
-				<text x={c.x + 4} y={yDay + 14} class="day" class:today={c.dayLabel.startsWith('오늘')}>{c.dayLabel}</text>
+				<text x={c.x + 4} y={yDay + 15} class="day" class:today={c.dayLabel.startsWith('오늘')}>{c.dayLabel}</text>
 			{/if}
-			<g transform="translate({c.x + cw / 2 - 10},{yIcon + 5})">
-				<Icon name={c.icon} size={20} color={iconColor(c.icon)} />
+			<g transform="translate({c.x + cw / 2 - 12},{yIcon + 7})">
+				<Icon name={c.icon} size={24} color={iconColor(c.icon)} />
 			</g>
 			{#if c.s.tmp != null}
-				<text x={c.x + cw / 2} y={yTemp + 13} text-anchor="middle" class="temp" class:pastt={c.i < nowIdx}
+				<text x={c.x + cw / 2} y={yTemp + 16} text-anchor="middle" class="temp" class:pastt={c.i < nowIdx}
 					>{Math.round(c.s.tmp)}°</text
 				>
 			{/if}
@@ -235,7 +235,7 @@
 						>{c.mmLabel}</text
 					>
 				{/if}
-				<text x={c.x + cw / 2} y={yPop + 14} text-anchor="middle" class="small" fill="var(--accent-text)"
+				<text x={c.x + cw / 2} y={yPop + 15} text-anchor="middle" class="small" fill="var(--accent-text)"
 					>{c.s.pop != null ? `${c.s.pop}%` : ''}</text
 				>
 				{#if c.s.vec != null && (c.s.wsd == null || c.s.wsd >= 0.5)}
@@ -243,12 +243,12 @@
 						<Icon name="arrow" size={14} color="var(--text-3)" />
 					</g>
 				{/if}
-				<text x={c.x + cw / 2} y={yWnd + 13} text-anchor="middle" class="small" fill="var(--text-3)">{wsdShort(c.s)}</text>
+				<text x={c.x + cw / 2} y={yWnd + 14} text-anchor="middle" class="small" fill="var(--text-3)">{wsdShort(c.s)}</text>
 				<text x={c.x + cw / 2} y={yHum + 14} text-anchor="middle" class="small" fill="var(--text-3)"
 					>{c.s.reh != null ? `${Math.round(c.s.reh)}%` : ''}</text
 				>
 			{/if}
-			<text x={c.x + cw / 2} y={yHour + 14} text-anchor="middle" class="hour">{c.hour}</text>
+			<text x={c.x + cw / 2} y={yHour + 16} text-anchor="middle" class="hour">{c.hour}</text>
 		{/each}
 
 		{#if meteo}
@@ -326,13 +326,13 @@
 		outline-offset: -2px;
 	}
 	text {
-		font-size: 11px;
+		font-size: 13px;
 	}
 	.small {
-		font-size: 10px;
+		font-size: 11px;
 	}
 	.tag {
-		font-size: 10px;
+		font-size: 11px;
 		font-weight: 700;
 		fill: #fff;
 	}
