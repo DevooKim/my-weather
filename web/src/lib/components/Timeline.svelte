@@ -44,9 +44,12 @@
 		ARW = 26,
 		WND = 20,
 		HUM = 22,
-		HOUR = 24;
+		HOUR = 22,
+		BOTTOM = 6;
+	// 위에서부터: 지금 표시, 날짜, 시각, 아이콘, 기온 선, 기온 숫자, (기상 줄들)
 	const yDay = TAG;
-	const yIcon = yDay + DAY;
+	const yHour = yDay + DAY;
+	const yIcon = yHour + HOUR;
 	const yChart = yIcon + ICON;
 	const yTemp = yChart + CHART;
 	const yPcp = yTemp + TEMP;
@@ -54,8 +57,7 @@
 	const yArw = yPop + POP;
 	const yWnd = yArw + ARW;
 	const yHum = yWnd + WND;
-	const yHour = $derived(meteo ? yHum + HUM : yPcp);
-	const H = $derived(yHour + HOUR);
+	const H = $derived((meteo ? yHum + HUM : yPcp) + BOTTOM);
 
 	const cx = (i: number) => i * cw + cw / 2;
 	// 지금 칸의 왼쪽 경계. 칸 가운데에 두면 글자 위를 지나간다.
@@ -193,9 +195,9 @@
 		{#if selected >= 0 && selected < n}
 			<rect
 				x={selected * cw + 1.5}
-				y={yIcon}
+				y={yHour}
 				width={cw - 3}
-				height={H - yIcon - 1.5}
+				height={H - yHour - 1.5}
 				rx="6"
 				fill="none"
 				stroke="var(--accent)"
@@ -248,7 +250,7 @@
 					>{c.s.reh != null ? `${Math.round(c.s.reh)}%` : ''}</text
 				>
 			{/if}
-			<text x={c.x + cw / 2} y={yHour + 16} text-anchor="middle" class="hour">{c.hour}</text>
+			<text x={c.x + cw / 2} y={yHour + 15} text-anchor="middle" class="hour">{c.hour}</text>
 		{/each}
 
 		{#if meteo}
@@ -259,7 +261,7 @@
 			<text x="4" y={yArw + 15} class="small" fill="var(--text-3)">바람</text>
 			<text x="4" y={yHum + 14} class="small" fill="var(--text-3)">습도</text>
 		{/if}
-		<line x1="0" x2={W} y1={yHour + 0.5} y2={yHour + 0.5} stroke="var(--line)" />
+		<line x1="0" x2={W} y1={yIcon + 0.5} y2={yIcon + 0.5} stroke="var(--line)" />
 
 		<!-- 기온 선 -->
 		{#each segs as sg, k (k)}
