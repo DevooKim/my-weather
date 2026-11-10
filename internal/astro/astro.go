@@ -1,7 +1,8 @@
 // Package astro는 일출·일몰 시각과 달 위상을 계산한다(API 없음, 설계 §3.7).
 //
 // 일출·일몰은 일출 방정식(NOAA 근사, 대기 굴절·태양 반지름 보정 −0.833°)을 쓴다. 오차는 1~2분 수준이다.
-// 달 위상은 기준 삭(2000-01-06 18:14 UTC)부터 평균 삭망월로 나눈 값이다(0 = 삭, 0.5 = 망). 오차는 반나절 안팎이다.
+// 달 위상은 달과 해의 이각(Meeus 『Astronomical Algorithms』 48장 간이식)으로 구한다(0 = 삭, 0.5 = 망).
+// 이각 오차는 0.5° 안팎, 시각으로 1시간 안쪽이다.
 package astro
 
 import (
@@ -45,15 +46,25 @@ func fromJulian(j float64) time.Time {
 	return time.Unix(int64(math.Round(sec)), 0)
 }
 
-// 평균 삭망월(일)과 기준 삭
-const synodic = 29.530588853
-
-var refNewMoon = time.Date(2000, 1, 6, 18, 14, 0, 0, time.UTC)
-
 // MoonPhase는 t의 달 위상(0~1)이다. 0 = 삭(그믐), 0.25 = 상현, 0.5 = 망(보름), 0.75 = 하현.
+// 비친 비율은 (1 − cos 2πp) / 2.
+//
+// 달 공전 속도가 일정하지 않아 평균 삭망월로 나누면 실제 삭과 반나절 넘게 어긋난다.
+// 그래서 평균 이각 D에 달·해 궤도 이심률에 따른 주요 보정항을 더한 참 이각을 쓴다(Meeus 48.4의 위상각 i = 180° − 참 이각).
 func MoonPhase(t time.Time) float64 {
-	days := t.Sub(refNewMoon).Hours() / 24
-	p := math.Mod(days/synodic, 1)
+	T := (julian(t) - 2451545.0) / 36525                                                   // J2000 이후 율리우스 세기
+	D := 297.8501921 + 445267.1114034*T - 0.0018819*T*T + T*T*T/545868 - T*T*T*T/113065000 // 달의 평균 이각
+	M := 357.5291092 + 35999.0502909*T - 0.0001536*T*T + T*T*T/24490000                    // 해의 평균 근점이각
+	Mp := 134.9633964 + 477198.8675055*T + 0.0087414*T*T + T*T*T/69699 - T*T*T*T/14712000  // 달의 평균 근점이각
+	D, M, Mp = D*deg, M*deg, Mp*deg
+	e := D/deg +
+		6.289*math.Sin(Mp) -
+		2.100*math.Sin(M) +
+		1.274*math.Sin(2*D-Mp) +
+		0.658*math.Sin(2*D) +
+		0.214*math.Sin(2*Mp) +
+		0.110*math.Sin(D)
+	p := math.Mod(e/360, 1)
 	if p < 0 {
 		p++
 	}

@@ -42,12 +42,34 @@ func TestPolar(t *testing.T) {
 }
 
 func TestMoonPhase(t *testing.T) {
-	// 2026-01-03 보름(10:03 UTC), 2026-01-18 그믐(19:52 UTC)
-	if p := MoonPhase(time.Date(2026, 1, 3, 10, 3, 0, 0, time.UTC)); math.Abs(p-0.5) > 0.03 {
-		t.Fatalf("full moon phase %.3f", p)
+	// 실제 삭·망 시각(UTC). 평균 삭망월로는 반나절 넘게 어긋나던 달(2026-11)도 넣는다.
+	at := func(s string) time.Time {
+		v, err := time.Parse("2006-01-02 15:04", s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
 	}
-	p := MoonPhase(time.Date(2026, 1, 18, 19, 52, 0, 0, time.UTC))
-	if p > 0.03 && p < 0.97 {
-		t.Fatalf("new moon phase %.3f", p)
+	// 0.01 ≈ 7시간
+	near := func(p, want float64) bool {
+		d := math.Abs(p - want)
+		return math.Min(d, 1-d) <= 0.01
+	}
+	for _, c := range []struct {
+		t    string
+		want float64
+	}{
+		{"2026-01-03 10:03", 0.5},
+		{"2026-01-18 19:52", 0},
+		{"2026-11-09 07:02", 0},
+		{"2026-11-24 14:53", 0.5},
+	} {
+		if p := MoonPhase(at(c.t)); !near(p, c.want) {
+			t.Errorf("%s: phase %.3f, want %.2f", c.t, p, c.want)
+		}
+	}
+	// 차는 달·기우는 달 방향
+	if p := MoonPhase(at("2026-11-13 00:00")); p <= 0 || p >= 0.25 {
+		t.Errorf("waxing crescent phase %.3f", p)
 	}
 }

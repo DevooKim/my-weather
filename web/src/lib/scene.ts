@@ -58,7 +58,7 @@ export function sceneOf(tl: Timeline | null): Scene {
 		rate,
 		u: s.uuu ?? 0,
 		v: s.vvv ?? 0,
-		moonPhase: today?.moon_phase ?? 0.5,
+		moonPhase: tl.moon_phase ?? today?.moon_phase ?? 0.5,
 		top,
 		bottom
 	};

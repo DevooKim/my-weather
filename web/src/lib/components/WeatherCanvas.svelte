@@ -2,6 +2,7 @@
 	// 배경 모션: 비·눈(세기=강수량, 기울기=바람), 해·달(위상). 구름 모션 없음.
 	// prefers-reduced-motion이면 움직이지 않는 한 장면만 그린다.
 	import type { Scene } from '$lib/scene';
+	import { MOON_DIAMETER, MOON_VIEWBOX, moonSvg } from '$lib/moon';
 	import { onMount } from 'svelte';
 
 	// height: 고정 높이(px). 스크롤로 접히는 머리처럼 부모 높이가 매 프레임 바뀌는 곳에서는
@@ -94,28 +95,22 @@
 			}
 		}
 
-		// 달 위상: 0=삭, 0.5=망. 밝은 부분을 두 호로 그린다.
+		// 달: moon.svg(ray 테마) 그림을 위상별로 한 번 만들어 이미지로 그린다.
+		let moonImg: HTMLImageElement | null = null;
+		let moonImgPhase = -1;
 		function drawMoon(x: number, y: number, r: number, ph: number) {
-			const c = ctx!;
-			c.save();
-			c.fillStyle = 'rgba(255,255,255,0.10)';
-			c.beginPath();
-			c.arc(x, y, r, 0, Math.PI * 2);
-			c.fill();
-			const lit = (1 - Math.cos(2 * Math.PI * ph)) / 2; // 비친 비율
-			if (lit > 0.02) {
-				const waxing = ph < 0.5;
-				const k = Math.cos(Math.PI * lit); // 터미네이터 타원 x 반지름 비율 (1→-1)
-				c.fillStyle = 'rgba(244,241,228,0.92)';
-				c.beginPath();
-				// 바깥 반원 (차는 달은 오른쪽이 밝다)
-				c.arc(x, y, r, -Math.PI / 2, Math.PI / 2, !waxing);
-				// 터미네이터
-				c.ellipse(x, y, Math.abs(k) * r, r, 0, Math.PI / 2, -Math.PI / 2, waxing ? k > 0 : k < 0);
-				c.closePath();
-				c.fill();
+			if (ph !== moonImgPhase) {
+				moonImgPhase = ph;
+				const img = new Image();
+				img.onload = () => {
+					if (moonImg === img && !raf) draw(0);
+				};
+				img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(moonSvg(ph));
+				moonImg = img;
 			}
-			c.restore();
+			if (!moonImg?.complete || !moonImg.naturalWidth) return;
+			const s = ((2 * r) / MOON_DIAMETER) * MOON_VIEWBOX;
+			ctx!.drawImage(moonImg, x - s / 2, y - s / 2, s, s);
 		}
 
 		function draw(dt: number) {

@@ -104,6 +104,8 @@ export interface PlaceInfo {
 export interface Timeline {
 	place: PlaceInfo;
 	now: string;
+	/** now 시각의 달 위상(0=삭, 0.5=망) */
+	moon_phase?: number;
 	range: { start: string; end: string; hourly_from: string; hourly_to: string };
 	complete: boolean;
 	retry_after_s: number | null;

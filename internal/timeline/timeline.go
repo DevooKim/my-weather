@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"time"
 
+	"myweather/internal/astro"
 	"myweather/internal/kma/value"
 	"myweather/internal/kst"
 	"myweather/internal/store"
@@ -70,6 +71,7 @@ type Input struct {
 type Timeline struct {
 	Place       Place             `json:"place"`
 	Now         time.Time         `json:"now"`
+	MoonPhase   float64           `json:"moon_phase"` // now 시각의 달 위상(배경 달). daily[].moon_phase는 그날 정오 값
 	Range       Range             `json:"range"`
 	Complete    bool              `json:"complete"`
 	RetryAfterS *int              `json:"retry_after_s"`
@@ -353,12 +355,13 @@ func Build(in Input) *Timeline {
 	}
 
 	tl := &Timeline{
-		Place:    in.Place,
-		Now:      now,
-		Range:    Range{Start: start, End: end, HourlyTo: today.AddDate(0, 0, 1)},
-		Complete: true,
-		Sources:  map[string]Source{},
-		Warnings: []string{},
+		Place:     in.Place,
+		Now:       now,
+		MoonPhase: astro.MoonPhase(now),
+		Range:     Range{Start: start, End: end, HourlyTo: today.AddDate(0, 0, 1)},
+		Complete:  true,
+		Sources:   map[string]Source{},
+		Warnings:  []string{},
 	}
 	blockStart := nowHour.Add(-time.Duration(nowHour.Hour()%3) * time.Hour)
 	tl.Range.HourlyFrom = blockStart
