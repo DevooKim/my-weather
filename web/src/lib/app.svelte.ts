@@ -271,7 +271,7 @@ class AppState {
 	#serverFail(e: unknown) {
 		if (e instanceof ApiError && e.status === 401) {
 			this.admin = false;
-			this.showToast('로그인이 풀렸어요. 메뉴 버튼을 빠르게 세 번 눌러 다시 로그인하세요.');
+			this.showToast('로그인이 풀렸어요. 메뉴의 정보 칸을 빠르게 세 번 눌러 다시 로그인하세요.');
 			return;
 		}
 		this.showToast(e instanceof ApiError ? e.message : '요청이 실패했어요.');

@@ -92,6 +92,10 @@ button {
 	cursor: pointer;
 	-webkit-tap-highlight-color: transparent;
 }
+/* 빠르게 여러 번 눌러도 두 번 탭 확대가 되지 않게(손가락 벌려 확대는 그대로) */
+html {
+	touch-action: manipulation;
+}
 button:focus-visible,
 input:focus-visible,
 [tabindex]:focus-visible {

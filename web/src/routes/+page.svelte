@@ -99,22 +99,9 @@
 		window.scrollTo({ top: 0 });
 	}
 
-	// 메뉴 버튼: 짧은 시간 안에 3번 → 로그인. 한 번 누른 동작은 0.4초 뒤에 실행.
-	let taps = 0;
-	let tapTimer: ReturnType<typeof setTimeout> | null = null;
+	// 메뉴 버튼: 바로 메뉴(설정). 로그인은 메뉴의 정보 칸을 3번 눌러서(Settings)
 	function menu() {
-		taps++;
-		if (tapTimer) clearTimeout(tapTimer);
-		if (taps >= 3) {
-			taps = 0;
-			if (app.admin) openSettings();
-			else app.loginOpen = true;
-			return;
-		}
-		tapTimer = setTimeout(() => {
-			taps = 0;
-			openSettings();
-		}, 400);
+		openSettings();
 	}
 	function openSettings() {
 		app.settingsOpen = true;

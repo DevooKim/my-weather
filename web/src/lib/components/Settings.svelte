@@ -80,6 +80,20 @@
 		onclose();
 	}
 
+	// 정보 칸을 짧은 시간 안에 3번 누르면 로그인(관리자 숨은 입구)
+	let infoTaps = 0;
+	let infoTimer: ReturnType<typeof setTimeout> | null = null;
+	function infoTap() {
+		if (app.admin) return;
+		infoTaps++;
+		if (infoTimer) clearTimeout(infoTimer);
+		infoTimer = setTimeout(() => (infoTaps = 0), 700);
+		if (infoTaps >= 3) {
+			infoTaps = 0;
+			app.loginOpen = true;
+		}
+	}
+
 	function openMotion() {
 		app.motionOpen = true;
 		history.pushState({ settings: true, motion: true }, '');
@@ -189,7 +203,8 @@
 		</section>
 		<section>
 			<h2>정보</h2>
-			<div class="card pad info">
+			<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+			<div class="card pad info" onclick={infoTap}>
 				<span>데이터: {info?.data_source ?? '기상청 단기예보 조회서비스 (공공데이터포털)'}</span>
 				{#if lastLine}<span>마지막 수집: {lastLine}</span>{/if}
 			</div>
