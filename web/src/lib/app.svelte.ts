@@ -30,6 +30,7 @@ class AppState {
 	loginOpen = $state(false);
 	installOpen = $state(false);
 	settingsOpen = $state(false);
+	motionOpen = $state(false);
 	toast = $state<string | null>(null);
 
 	#timer: ReturnType<typeof setTimeout> | null = null;

@@ -80,6 +80,11 @@
 		onclose();
 	}
 
+	function openMotion() {
+		app.motionOpen = true;
+		history.pushState({ settings: true, motion: true }, '');
+	}
+
 	const md = (iso?: string | null) => {
 		if (!iso) return '';
 		const p = kst(iso);
@@ -174,6 +179,14 @@
 				</div>
 			</section>
 		{/if}
+		<section>
+			<h2>보기</h2>
+			<div class="card">
+				<button type="button" class="item" onclick={openMotion}>
+					<span class="grow">날씨 모션 보기</span><span class="chev" aria-hidden="true">›</span>
+				</button>
+			</div>
+		</section>
 		<section>
 			<h2>정보</h2>
 			<div class="card pad info">
@@ -325,6 +338,10 @@
 	}
 	.item:last-child {
 		border-bottom: 0;
+	}
+	.chev {
+		font-size: 20px;
+		color: var(--text-4);
 	}
 	.grow {
 		flex-grow: 1;

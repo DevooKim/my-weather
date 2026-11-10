@@ -9,6 +9,7 @@
 	import LoginSheet from '$lib/components/LoginSheet.svelte';
 	import PlaceList from '$lib/components/PlaceList.svelte';
 	import Settings from '$lib/components/Settings.svelte';
+	import Motion from '$lib/components/Motion.svelte';
 	import Sheet from '$lib/components/Sheet.svelte';
 	import Timeline from '$lib/components/Timeline.svelte';
 	import { hm, kst, shortFull, summaryLines } from '$lib/format';
@@ -29,8 +30,10 @@
 		upd();
 		mq.addEventListener('change', upd);
 		window.addEventListener('resize', upd);
+		// 설정·날씨 모션은 history 항목({settings, motion})으로 열린다. 뒤로 가면 그 항목에 맞춰 닫는다.
 		const onPop = () => {
-			if (app.settingsOpen) app.settingsOpen = false;
+			app.settingsOpen = !!history.state?.settings;
+			app.motionOpen = !!history.state?.motion;
 		};
 		window.addEventListener('popstate', onPop);
 		return () => {
@@ -116,6 +119,10 @@
 	function openSettings() {
 		app.settingsOpen = true;
 		history.pushState({ settings: true }, '');
+	}
+	function closeMotion() {
+		if (history.state?.motion) history.back();
+		else app.motionOpen = false;
 	}
 	function closeSettings() {
 		if (history.state?.settings) history.back();
@@ -261,6 +268,7 @@
 {#if app.loginOpen}<LoginSheet />{/if}
 {#if app.installOpen}<InstallSheet />{/if}
 {#if app.settingsOpen}<Settings onclose={closeSettings} />{/if}
+{#if app.motionOpen}<Motion onclose={closeMotion} />{/if}
 {#if app.toast}
 	<div class="toast" role="status" aria-live="polite">{app.toast}</div>
 {/if}
