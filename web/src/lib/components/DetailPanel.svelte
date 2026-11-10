@@ -22,7 +22,7 @@
 	const pcp = $derived(s && s.wet ? amountText(s.pcp) : '');
 	const sno = $derived(s && s.sno && s.sno.mm > 0 ? amountText(s.sno, 'cm') : '');
 
-	/** 어제 같은 시각: 지금이면 요약 값, 아니면 24시간 전 칸 */
+	/** 어제 같은 시각: 지금이면 요약 값, 아니면 24시간 전 시각을 담은 칸(어제가 3시간 칸이면 그 칸 값) */
 	const yesterday = $derived.by(() => {
 		if (!s || s.tmp == null) return null;
 		if (isNow && tl.summary.yesterday_same_hour?.tmp != null) {
@@ -30,15 +30,18 @@
 			return { tmp: y.tmp as number, est: y.estimated };
 		}
 		const target = new Date(s.t).getTime() - 86400_000;
-		const y = tl.slots.find((x) => new Date(x.t).getTime() === target);
+		const y = tl.slots.find((x) => {
+			const t0 = new Date(x.t).getTime();
+			return t0 <= target && target < t0 + (x.h || 1) * 3600_000;
+		});
 		return y && y.tmp != null ? { tmp: y.tmp, est: y.estimated } : null;
 	});
 	const yText = $derived.by(() => {
 		if (!yesterday || !s || s.tmp == null) return '';
 		const d = Math.round(s.tmp - yesterday.tmp);
-		if (isNow) return `어제 같은 시각 ${deg(yesterday.tmp)}`;
-		if (d === 0) return '어제 같은 시각과 비슷함';
-		return `어제 같은 시각보다 ${Math.abs(d)}° ${d > 0 ? '높음' : '낮음'}`;
+		if (isNow) return `어제 ${deg(yesterday.tmp)}`;
+		if (d === 0) return '어제와 비슷함';
+		return `어제보다 ${Math.abs(d)}° ${d > 0 ? '높음' : '낮음'}`;
 	});
 	const popText = $derived(
 		s?.pop != null ? `강수확률 ${s.pop}%` : ''
@@ -127,17 +130,42 @@
 		font-size: 13px;
 		color: var(--text-2);
 	}
+	/* 타임라인의 '지금' 표시와 같은 파란 계열 칩. 보이는 높이는 32px, 누르는 영역은 44px */
 	.pill {
-		min-height: 44px;
-		padding: 0 14px;
-		margin: -6px -4px -6px 0;
-		border: 1px solid var(--border-strong);
-		border-radius: 22px;
-		background: var(--surface);
-		color: var(--text);
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		height: 32px;
+		padding: 0 12px 0 10px;
+		border: 1px solid var(--accent-border);
+		border-radius: 16px;
+		background: var(--accent-weak);
+		color: var(--accent-text);
 		font: inherit;
 		font-size: 13px;
+		font-weight: 600;
 		flex: none;
+		cursor: pointer;
+		transition: background 0.15s;
+	}
+	.pill::before {
+		content: '';
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--accent);
+	}
+	.pill::after {
+		content: '';
+		position: absolute;
+		inset: -6px -2px;
+	}
+	.pill:hover {
+		background: color-mix(in srgb, var(--accent-weak), var(--accent) 12%);
+	}
+	.pill:active {
+		background: color-mix(in srgb, var(--accent-weak), var(--accent) 22%);
 	}
 	.inline {
 		display: flex;
@@ -149,7 +177,7 @@
 		font-size: 14px;
 	}
 	.inline .pill {
-		margin: 0 0 0 auto;
+		margin-left: auto;
 	}
 	.muted {
 		color: var(--text-2);
