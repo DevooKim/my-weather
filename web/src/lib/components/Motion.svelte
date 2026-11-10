@@ -53,7 +53,7 @@
 		display: flex;
 		align-items: center;
 		gap: 4px;
-		padding: calc(6px + env(safe-area-inset-top)) 8px 6px;
+		padding: calc(6px + env(safe-area-inset-top) + var(--pwa-top)) 8px 6px;
 		background: var(--surface);
 		border-bottom: 1px solid var(--line-2);
 	}

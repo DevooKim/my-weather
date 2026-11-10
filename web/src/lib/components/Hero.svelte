@@ -79,7 +79,7 @@
 <header
 	class="hero"
 	bind:this={el}
-	style="height:calc({full}px + env(safe-area-inset-top)); top:calc({bar - full}px)"
+	style="height:calc({full}px + env(safe-area-inset-top) + var(--pwa-top)); top:calc({bar - full}px)"
 >
 	<WeatherCanvas {scene} height={full + 60} />
 	<div class="inner">
@@ -133,7 +133,7 @@
 		box-sizing: border-box;
 		max-width: 720px;
 		margin: 0 auto;
-		padding: calc(8px + env(safe-area-inset-top)) 12px 20px 20px;
+		padding: calc(8px + env(safe-area-inset-top) + var(--pwa-top)) 12px 20px 20px;
 		display: flex;
 		flex-direction: column;
 		/* 접히는 동안 서서히 사라진다. 투명도·변형만 바꿔서 레이아웃을 다시 계산하지 않는다 */

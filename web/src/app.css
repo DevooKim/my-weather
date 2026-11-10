@@ -1,5 +1,7 @@
 /* 무채색 + 강조 파랑 #2A72E5. 카드·그래프·시트는 시스템 라이트/다크를 따른다. */
 :root {
+	/* 홈 화면 앱(PWA)에서 상태바 아래 여백을 조금 더. iOS가 상태바 밑을 흐리게 덮어서 바로 아래 글자가 흐려 보인다 */
+	--pwa-top: 0px;
 	color-scheme: light dark;
 	--page: #ffffff;
 	--page-2: #f4f5f7;
@@ -109,4 +111,10 @@ input:focus-visible,
 	overflow: hidden;
 	clip: rect(0 0 0 0);
 	white-space: nowrap;
+}
+
+@media (display-mode: standalone) {
+	:root {
+		--pwa-top: 10px;
+	}
 }
