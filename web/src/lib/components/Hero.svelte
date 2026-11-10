@@ -81,7 +81,8 @@
 	bind:this={el}
 	style="height:calc({full}px + env(safe-area-inset-top) + var(--pwa-top)); top:calc({bar - full}px)"
 >
-	<WeatherCanvas {scene} height={full + 60} />
+	<!-- 배경은 머리 높이(full + 상태바 + PWA 여백)보다 넉넉히: 모자라면 아래에 머리 바탕색 띠가 보인다 -->
+	<WeatherCanvas {scene} height={full + 120} />
 	<div class="inner">
 		<div class="top">
 			<button type="button" class="place" onclick={onplace} aria-haspopup="dialog">
