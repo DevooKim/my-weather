@@ -73,10 +73,15 @@ export const PTY_TEXT: Record<Pty, string> = {
 };
 
 /** 날씨 한 단어. 비가 아니라고 본 초단기 5·6·7(wet=false)은 하늘상태로 말한다. */
-export function weatherWord(s: { sky: Sky | null; pty: Pty | null; wet: boolean }) {
-	if (s.pty && s.pty !== 'none' && s.wet) return PTY_TEXT[s.pty];
-	if (s.sky) return SKY_TEXT[s.sky];
-	return '';
+export function weatherWord(s: { sky: Sky | null; pty: Pty | null; wet: boolean; lgt?: number | null }) {
+	const base = s.pty && s.pty !== 'none' && s.wet ? PTY_TEXT[s.pty] : s.sky ? SKY_TEXT[s.sky] : '';
+	if (hasLightning(s)) return base ? `${base} · 천둥번개` : '천둥번개';
+	return base;
+}
+
+/** 초단기예보 낙뢰 값이 0보다 크면 천둥번개 */
+export function hasLightning(s: { lgt?: number | null }) {
+	return s.lgt != null && s.lgt > 0;
 }
 
 export function isSnowy(p: Pty | null) {
@@ -173,4 +178,16 @@ export function district(full?: string) {
 	if (!full) return '';
 	const parts = full.split(/\s+/);
 	return parts.length >= 3 ? parts[parts.length - 2] : '';
+}
+
+/** 미세먼지 문구: "초미세먼지 나쁨". 등급이 없으면 '' */
+export function airText(a: { grade: number; label: string; text: string } | null | undefined) {
+	return a && a.grade > 0 && a.text ? `${a.label} ${a.text}` : '';
+}
+
+/** 시정 문구: 1km 미만은 m, 그 이상은 km. 안개면 "안개 · 시정 600m" */
+export function visText(f: { vis: number; fog: boolean } | null | undefined) {
+	if (!f || f.vis < 0) return f?.fog ? '안개' : '';
+	const v = f.vis < 1000 ? `${Math.round(f.vis / 10) * 10}m` : `${Math.round(f.vis / 1000)}km`;
+	return f.fog ? `안개 · 시정 ${v}` : `시정 ${v}`;
 }

@@ -1,6 +1,6 @@
 // 아이콘·낮밤·배경 판단
 import type { IconName } from './components/Icon.svelte';
-import { isSnowy, kst } from './format';
+import { hasLightning, isSnowy, kst } from './format';
 import type { Day, Pty, Sky, Slot } from './types';
 
 export function sunFor(daily: Day[] | null | undefined, iso: string) {
@@ -18,9 +18,10 @@ export function isDay(iso: string, daily: Day[] | null | undefined, midOffsetH =
 }
 
 export function iconFor(
-	s: { sky: Sky | null; pty: Pty | null; wet: boolean },
+	s: { sky: Sky | null; pty: Pty | null; wet: boolean; lgt?: number | null },
 	day: boolean
 ): IconName {
+	if (hasLightning(s)) return 'thunder';
 	if (s.wet && s.pty && s.pty !== 'none') {
 		if (s.pty === 'rain_snow' || s.pty === 'drizzle_snow') return 'rain_snow';
 		if (isSnowy(s.pty)) return 'snow';
@@ -47,6 +48,8 @@ export function iconColor(n: IconName) {
 		case 'snow':
 		case 'rain_snow':
 			return 'var(--icon-rain)';
+		case 'thunder':
+			return 'var(--icon-sun)';
 		default:
 			return 'var(--icon-gray)';
 	}

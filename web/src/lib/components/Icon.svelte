@@ -8,6 +8,7 @@
 		| 'rain'
 		| 'snow'
 		| 'rain_snow'
+		| 'thunder'
 		| 'unknown'
 		| 'chevron-down'
 		| 'chevron-up'
@@ -71,6 +72,9 @@
 		<path d="M7 14h10a3.5 3.5 0 0 0 .4-7 5.5 5.5 0 0 0-10.6 1.3A2.9 2.9 0 0 0 7 14z" />
 		<path d="M8 17l-1 3M16 17l-1 3" />
 		<path d="M12 18h.01" stroke-width="2.6" />
+	{:else if name === 'thunder'}
+		<path d="M7 14h10a3.5 3.5 0 0 0 .4-7 5.5 5.5 0 0 0-10.6 1.3A2.9 2.9 0 0 0 7 14z" />
+		<path d="M12.5 15.5l-2 3.2h3l-2 3.3" />
 	{:else if name === 'unknown'}
 		<path d="M9 12h6" />
 	{:else if name === 'chevron-down'}

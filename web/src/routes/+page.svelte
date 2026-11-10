@@ -48,7 +48,7 @@
 	const H1C = 172;
 	const BAR = 56;
 
-	const scene = $derived(sceneOf(app.timeline));
+	const scene = $derived(app.demo?.scene ?? sceneOf(app.timeline));
 	$effect(() => {
 		document.querySelector('meta[name="theme-color"]')?.setAttribute('content', scene.top);
 	});
@@ -269,6 +269,12 @@
 {#if app.installOpen}<InstallSheet />{/if}
 {#if app.settingsOpen}<Settings onclose={closeSettings} />{/if}
 {#if app.motionOpen}<Motion onclose={closeMotion} />{/if}
+{#if app.demo}
+	<div class="demo" role="status">
+		<span>모션 데모 · {app.demo.name}</span>
+		<button type="button" onclick={() => (app.demo = null)}>끄기</button>
+	</div>
+{/if}
 {#if app.toast}
 	<div class="toast" role="status" aria-live="polite">{app.toast}</div>
 {/if}
@@ -344,6 +350,35 @@
 		color: var(--btn-dark-text);
 		font: inherit;
 		font-size: 13px;
+	}
+	.demo {
+		position: fixed;
+		left: 50%;
+		bottom: calc(24px + env(safe-area-inset-bottom));
+		transform: translateX(-50%);
+		z-index: 55;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		max-width: calc(100% - 32px);
+		padding: 6px 6px 6px 16px;
+		border-radius: 24px;
+		background: var(--btn-dark);
+		color: var(--btn-dark-text);
+		font-size: 14px;
+		white-space: nowrap;
+		box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+	}
+	.demo button {
+		min-height: 36px;
+		padding: 0 14px;
+		border: 0;
+		border-radius: 18px;
+		background: rgba(255, 255, 255, 0.16);
+		color: inherit;
+		font: inherit;
+		font-weight: 600;
+		cursor: pointer;
 	}
 	.toast {
 		position: fixed;

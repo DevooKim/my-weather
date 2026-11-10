@@ -127,7 +127,7 @@
 
 	const bellOn = $derived(!!place.alerts && (place.alerts.soon || place.alerts.eve));
 	const sub = $derived(district(place.full) || shortFull(place.full, ''));
-	const scene = $derived(card && current ? sceneOf(app.timeline) : null);
+	const scene = $derived(card && current ? (app.demo?.scene ?? sceneOf(app.timeline)) : null);
 	const sumLine = $derived(card && current && app.timeline ? summaryLines(app.timeline.summary.text).join(' · ') : '');
 </script>
 

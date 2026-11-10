@@ -1,7 +1,7 @@
 <script lang="ts">
 	// 1A(큰 현재 날씨) → 1C(접힌 크기) → 한 줄 머리. 높이 h는 부모가 스크롤로 정한다.
 	import { app } from '$lib/app.svelte';
-	import { deg, nowPrecipText, shortFull, summaryLines, weatherWord } from '$lib/format';
+	import { airText, deg, nowPrecipText, shortFull, summaryLines, weatherWord } from '$lib/format';
 	import type { Scene } from '$lib/scene';
 	import Icon from './Icon.svelte';
 	import WeatherCanvas from './WeatherCanvas.svelte';
@@ -34,8 +34,11 @@
 	const feels = $derived(
 		nowSlot?.feels != null && tmp != null && Math.round(nowSlot.feels) !== Math.round(tmp) ? `체감 ${deg(nowSlot.feels)}` : ''
 	);
+	// 미세먼지는 나쁨 이상일 때만 머리에 붙인다(좋음·보통은 상세 패널에서)
+	const airBad = $derived((tl?.air?.grade ?? 0) >= 3 ? airText(tl?.air) : '');
+	const fogWord = $derived(tl?.fog?.fog ? '안개' : '');
 	const desc1A = $derived(
-		[precip ? precip.replace(/^(\S+) /, '$1 · 시간당 ') : word, feels].filter(Boolean).join(' · ')
+		[precip ? precip.replace(/^(\S+) /, '$1 · 시간당 ') : word, fogWord, feels, airBad].filter(Boolean).join(' · ')
 	);
 	const desc1C = $derived(precip || word);
 

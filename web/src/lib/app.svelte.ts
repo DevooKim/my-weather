@@ -1,4 +1,5 @@
 // 앱 상태 (Svelte 5 runes). 장소·타임라인·즐겨찾기·관리자 상태.
+import type { Scene } from './scene';
 import { api, ApiError, favToPlace, type FavList } from './api';
 import { placeKey, samePlace, store } from './storage';
 import type { NowItem, Place, Timeline } from './types';
@@ -31,6 +32,8 @@ class AppState {
 	installOpen = $state(false);
 	settingsOpen = $state(false);
 	motionOpen = $state(false);
+	/** 모션 데모: 날씨 모션 보기에서 고른 장면을 첫 화면 배경에 잠깐 씌운다(새로고침하면 사라짐) */
+	demo = $state<{ name: string; scene: Scene } | null>(null);
 	toast = $state<string | null>(null);
 
 	#timer: ReturnType<typeof setTimeout> | null = null;

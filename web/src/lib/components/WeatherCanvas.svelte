@@ -1,5 +1,6 @@
 <script lang="ts">
-	// 배경 모션: 비·눈(세기=강수량, 기울기=바람), 해·달(위상), 구름(구름 많음일 때만, 바람 방향으로 천천히 흐름).
+	// 배경 모션: 비·눈(세기=강수량, 기울기=바람), 해·달(위상), 구름(구름 많음일 때만, 바람 방향으로 천천히 흐름),
+	// 번개(낙뢰 예보: 몇 초에 한 번 약하게 번쩍), 안개(옆으로 흐르는 옅은 띠), 황사(누런 기운과 고운 먼지).
 	// prefers-reduced-motion이면 움직이지 않는 한 장면만 그린다.
 	import type { Scene } from '$lib/scene';
 	import { MOON_DIAMETER, MOON_VIEWBOX, moonSvg } from '$lib/moon';
@@ -14,6 +15,8 @@
 	type P = { x: number; y: number; z: number; s: number };
 	/** 구름 하나: 미리 그려 둔 그림(sp)을 x로 흘린다. z가 클수록 가깝다(크고 빠름) */
 	type C = { x: number; y: number; z: number; sp: HTMLCanvasElement; sw: number; sh: number };
+	/** 안개 띠 하나 */
+	type F = { x: number; y: number; w: number; h: number; v: number; a: number };
 
 	onMount(() => {
 		const cv = canvas!;
@@ -27,7 +30,12 @@
 			last = 0,
 			visible = true,
 			parts: P[] = [],
-			clouds: C[] = [];
+			clouds: C[] = [],
+			dusts: P[] = [],
+			fogs: F[] = [],
+			flashT = -1, // 번개가 친 뒤 지난 초(-1 = 없음)
+			nextFlash = 3,
+			bolt: { pts: [number, number][]; width: number }[] = [];
 
 		const count = () => {
 			const sc = scene;
@@ -46,7 +54,169 @@
 			const n = count();
 			parts = Array.from({ length: n }, () => spawn(true));
 			resetClouds();
+			resetFogDust();
+			flashT = -1;
+			nextFlash = 1.5 + Math.random() * 2;
 		};
+		const animated = () => parts.length > 0 || clouds.length > 0 || dusts.length > 0 || fogs.length > 0 || scene.lightning;
+
+		// --- 안개·황사 ---
+		function resetFogDust() {
+			if (!w || !h) return;
+			const sc = scene;
+			fogs = sc.fog
+				? Array.from({ length: 5 }, (_, i) => ({
+						x: Math.random() * w * 1.4 - w * 0.6,
+						y: h * (0.15 + i * 0.17) + (Math.random() - 0.5) * h * 0.06,
+						w: w * (0.9 + Math.random() * 0.7),
+						h: h * (0.16 + Math.random() * 0.1),
+						v: (6 + Math.random() * 8) * (i % 2 ? -1 : 1),
+						a: 0.1 + Math.random() * 0.08
+					}))
+				: [];
+			const area = (w * h) / (390 * 430);
+			dusts = sc.dust ? Array.from({ length: Math.round(90 * Math.max(0.5, area)) }, () => spawn(true)) : [];
+		}
+		function drawFog(dt: number) {
+			if (!fogs.length) return;
+			const c = ctx!;
+			// 안개는 전체를 옅게 흐리게 덮고, 그 위로 더 진한 띠가 천천히 흐른다
+			c.fillStyle = 'rgba(210,216,224,0.12)';
+			c.fillRect(0, 0, w, h);
+			for (const f of fogs) {
+				f.x += f.v * dt;
+				if (f.v > 0 && f.x > w) f.x = -f.w;
+				if (f.v < 0 && f.x < -f.w) f.x = w;
+				const cx = f.x + f.w / 2,
+					cy = f.y;
+				c.save();
+				c.translate(cx, cy);
+				c.scale(1, f.h / f.w);
+				const g = c.createRadialGradient(0, 0, 0, 0, 0, f.w / 2);
+				g.addColorStop(0, `rgba(225,230,236,${f.a})`);
+				g.addColorStop(1, 'rgba(225,230,236,0)');
+				c.fillStyle = g;
+				c.beginPath();
+				c.arc(0, 0, f.w / 2, 0, Math.PI * 2);
+				c.fill();
+				c.restore();
+			}
+		}
+		function drawDust(dt: number) {
+			if (!scene.dust) return;
+			const c = ctx!;
+			// 누런 기운: 아래로 갈수록 진하게
+			const g = c.createLinearGradient(0, 0, 0, h);
+			g.addColorStop(0, 'rgba(196,150,80,0.16)');
+			g.addColorStop(1, 'rgba(176,128,64,0.30)');
+			c.fillStyle = g;
+			c.fillRect(0, 0, w, h);
+			const vx = Math.abs(scene.u) < 0.5 ? 10 : Math.max(-12, Math.min(12, scene.u)) * 6;
+			for (const p of dusts) {
+				p.s += dt * 0.8;
+				p.x += (vx + Math.sin(p.s) * 6) * p.z * dt;
+				p.y += (4 + Math.cos(p.s) * 5) * dt;
+				if (p.x > w + 10) p.x = -10;
+				if (p.x < -10) p.x = w + 10;
+				if (p.y > h + 10) p.y = -10;
+				c.fillStyle = `rgba(232,200,140,${0.25 + 0.3 * p.z})`;
+				c.beginPath();
+				c.arc(p.x, p.y, 0.6 + 1.1 * p.z, 0, Math.PI * 2);
+				c.fill();
+			}
+		}
+
+		// --- 번개 ---
+		// 줄기: 위에서 아래로 지그재그(큰 꺾임 + 잔 떨림)로 내려가고, 중간중간 가는 가지가 옆으로 뻗는다.
+		// 깜빡임이 불편하지 않게: 4~9초에 한 번, 1초 안에 밝은 순간은 두 번뿐(초당 3회 미만), 0.7초 안에 사라진다.
+		type Seg = { pts: [number, number][]; width: number };
+		function zigzag(x: number, y: number, len: number, dir: number, jag: number): [number, number][] {
+			const pts: [number, number][] = [[x, y]];
+			const n = Math.max(6, Math.round(len / 14));
+			let drift = dir;
+			for (let i = 0; i < n; i++) {
+				drift += (Math.random() - 0.5) * 0.6;
+				const step = len / n;
+				x += drift * step * 0.5 + (Math.random() - 0.5) * jag;
+				y += step * (0.7 + Math.random() * 0.6);
+				pts.push([x, y]);
+			}
+			return pts;
+		}
+		function makeBolt(): Seg[] {
+			const x0 = w * (0.2 + Math.random() * 0.6);
+			const len = h * (0.55 + Math.random() * 0.3);
+			const main = zigzag(x0, -10, len, (Math.random() - 0.5) * 0.6, 22);
+			const segs: Seg[] = [{ pts: main, width: 1 }];
+			const nb = 2 + Math.floor(Math.random() * 3);
+			for (let i = 0; i < nb; i++) {
+				const at = main[1 + Math.floor(Math.random() * (main.length * 0.6))];
+				const side = Math.random() < 0.5 ? -1 : 1;
+				const b = zigzag(at[0], at[1], len * (0.15 + Math.random() * 0.25), side * (0.8 + Math.random()), 14);
+				segs.push({ pts: b, width: 0.45 });
+				// 가지의 잔가지
+				if (Math.random() < 0.5) {
+					const at2 = b[Math.floor(b.length / 2)];
+					segs.push({ pts: zigzag(at2[0], at2[1], len * 0.1, side * 1.4, 10), width: 0.25 });
+				}
+			}
+			return segs;
+		}
+		let boltAt = 0.5; // 번개 친 곳(가로 비율): 하늘 밝아지는 중심
+		function drawLightning(dt: number) {
+			if (!scene.lightning) return;
+			const c = ctx!;
+			if (flashT < 0) {
+				nextFlash -= dt;
+				if (nextFlash <= 0) {
+					flashT = 0;
+					// 75%는 줄기가 보이고, 나머지는 구름 속 번개(하늘만 번쩍)
+					bolt = Math.random() < 0.75 ? makeBolt() : [];
+					boltAt = bolt.length ? bolt[0].pts[0][0] / Math.max(1, w) : 0.2 + Math.random() * 0.6;
+					nextFlash = 4 + Math.random() * 5;
+				}
+				return;
+			}
+			flashT += dt;
+			const t = flashT;
+			// 번쩍(0~0.07) → 잠깐 어두움 → 다시 번쩍(0.15~0.22) → 0.7초까지 사그라듦
+			const pulse = t < 0.07 ? 1 : t < 0.15 ? 0.25 : t < 0.22 ? 0.9 : Math.max(0, 0.9 * (1 - (t - 0.22) / 0.48));
+			if (pulse <= 0) {
+				flashT = -1;
+				return;
+			}
+			// 하늘: 전체가 살짝 + 번개 친 쪽 위가 더 밝게
+			c.fillStyle = `rgba(215,225,255,${0.14 * pulse})`;
+			c.fillRect(0, 0, w, h);
+			const gx = boltAt * w;
+			const g = c.createRadialGradient(gx, 0, 0, gx, 0, Math.max(w, h) * 0.8);
+			g.addColorStop(0, `rgba(235,240,255,${0.42 * pulse})`);
+			g.addColorStop(1, 'rgba(235,240,255,0)');
+			c.fillStyle = g;
+			c.fillRect(0, 0, w, h);
+			if (!bolt.length || t > 0.45) return;
+			// 줄기: 넓은 빛 번짐 → 푸른 테 → 흰 심 순으로 겹쳐 그린다
+			const a = t < 0.07 || (t > 0.15 && t < 0.22) ? 1 : 0.55 * pulse;
+			const base = Math.max(1.6, Math.min(w, 520) / 160);
+			c.save();
+			c.lineJoin = 'round';
+			c.lineCap = 'round';
+			const pass = (width: number, color: string, blur: number) => {
+				c.strokeStyle = color;
+				c.shadowColor = 'rgba(170,195,255,0.95)';
+				c.shadowBlur = blur;
+				for (const sgm of bolt) {
+					c.lineWidth = width * sgm.width;
+					c.beginPath();
+					sgm.pts.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
+					c.stroke();
+				}
+			};
+			pass(base * 5, `rgba(150,180,255,${0.22 * a})`, 28);
+			pass(base * 2.2, `rgba(205,220,255,${0.7 * a})`, 14);
+			pass(base, `rgba(255,255,255,${a})`, 6);
+			c.restore();
+		}
 
 		// 구름: 적운 모양. 가운데 큰 봉우리와 양옆 어깨를 겹치고, 바닥은 평평하게 잘라 아래로 흐려지게 한다.
 		// 미리 한 장으로 그려 두고 프레임마다 drawImage만 한다.
@@ -163,6 +333,7 @@
 			if (first) reset();
 			else {
 				resetClouds();
+				resetFogDust();
 				// 입자를 버리지 않고 새 크기에 맞춰 옮긴 뒤 개수만 맞춘다(크기가 바뀌어도 비가 튀지 않게)
 				for (const p of parts) {
 					p.x = (p.x / Math.max(1, ow)) * w;
@@ -221,6 +392,14 @@
 			ctx!.clearRect(0, 0, w, h);
 			drawSky();
 			drawClouds(dt);
+			drawPrecip(dt);
+			drawDust(dt);
+			drawFog(dt);
+			drawLightning(dt);
+		}
+
+		function drawPrecip(dt: number) {
+			const sc = scene;
 			if (!parts.length) return;
 			const snow = sc.kind === 'snow';
 			const mixed = sc.kind === 'mixed';
@@ -263,7 +442,7 @@
 			const dt = last ? Math.min(0.05, (t - last) / 1000) : 0.016;
 			last = t;
 			draw(dt);
-			if (parts.length || clouds.length) raf = requestAnimationFrame(frame);
+			if (animated()) raf = requestAnimationFrame(frame);
 		}
 		const start = () => {
 			if (raf || mq.matches) {
@@ -271,7 +450,7 @@
 				return;
 			}
 			last = 0;
-			if (parts.length || clouds.length) raf = requestAnimationFrame(frame);
+			if (animated()) raf = requestAnimationFrame(frame);
 			else draw(0);
 		};
 		const stop = () => {
@@ -304,6 +483,9 @@
 				void scene.rate;
 				void scene.light;
 				void scene.moonPhase;
+				void scene.lightning;
+				void scene.fog;
+				void scene.dust;
 				reset();
 				stop();
 				start();

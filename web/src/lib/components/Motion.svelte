@@ -1,5 +1,6 @@
 <script lang="ts">
 	// 날씨 모션 보기: 메뉴(설정) 위에 뜨는 화면. 날씨·시간대별 배경 모션을 한눈에 본다.
+	import { app } from '$lib/app.svelte';
 	import { MOTION_DEMOS } from '$lib/motion-demo';
 	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
@@ -7,6 +8,16 @@
 
 	let { onclose }: { onclose: () => void } = $props();
 	onMount(() => document.querySelector<HTMLElement>('.motion h1')?.focus());
+
+	// 카드를 누르면 그 장면을 첫 화면 배경에 씌우고 메뉴까지 닫는다(실제 화면에서 보기)
+	function apply(d: (typeof MOTION_DEMOS)[number]) {
+		app.demo = d;
+		if (history.state?.motion) history.go(-2);
+		else {
+			app.motionOpen = false;
+			app.settingsOpen = false;
+		}
+	}
 </script>
 
 <div class="motion" role="dialog" aria-modal="true" aria-label="날씨 모션">
@@ -14,10 +25,12 @@
 		<button type="button" class="icon-btn" aria-label="뒤로" onclick={onclose}><Icon name="back" size={22} /></button>
 		<h1 tabindex="-1">날씨 모션</h1>
 	</header>
+	<p class="hint">장면을 누르면 첫 화면에서 볼 수 있어요.</p>
 	<ul class="grid">
 		{#each MOTION_DEMOS as d (d.name)}
 			<li class="cardm">
 				<WeatherCanvas scene={d.scene} />
+				<button type="button" class="hit" aria-label="{d.name} 첫 화면에서 보기" onclick={() => apply(d)}></button>
 				<span class="label">{d.name}</span>
 			</li>
 		{/each}
@@ -76,7 +89,27 @@
 		border-radius: 12px;
 		overflow: hidden;
 	}
+	.hit {
+		position: absolute;
+		inset: 0;
+		border: 0;
+		background: none;
+		cursor: pointer;
+	}
+	.hit:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: -2px;
+		border-radius: 12px;
+	}
+	.hint {
+		max-width: 1200px;
+		margin: 12px auto 0;
+		padding: 0 16px;
+		font-size: 13px;
+		color: var(--text-3);
+	}
 	.label {
+		pointer-events: none;
 		position: absolute;
 		left: 10px;
 		right: 10px;

@@ -40,6 +40,8 @@ export interface Slot {
 	uuu: number | null;
 	vvv: number | null;
 	sno: Amount | null;
+	/** 초단기예보 낙뢰. 0보다 크면 낙뢰 예상. 지금~6시간 칸에만 있다 */
+	lgt?: number | null;
 	src: { obs?: string; pcp?: string; sky?: string };
 	estimated: boolean;
 	partial: boolean;
@@ -114,6 +116,10 @@ export interface Timeline {
 	slots: Slot[];
 	summary: Summary;
 	daily: Day[] | null;
+	/** 가까운 측정소의 지금 미세먼지(에어코리아). grade 1 좋음 · 2 보통 · 3 나쁨 · 4 매우나쁨 */
+	air?: Air | null;
+	/** 가까운 AWS 시정 관측소(15km 안)의 지금 안개 여부. 시정 1km 미만이거나 현천이 안개 */
+	fog?: { station: number; at: string; km: number; vis: number; fog: boolean } | null;
 	warnings: string[] | null;
 }
 
@@ -147,4 +153,17 @@ export interface Region {
 	ny: number;
 	lat: number | null;
 	lon: number | null;
+}
+
+export interface Air {
+	station: string;
+	at: string;
+	pm10: number | null;
+	pm25: number | null;
+	pm10_grade: number | null;
+	pm25_grade: number | null;
+	grade: number;
+	/** '미세먼지' 또는 '초미세먼지'(등급이 나쁜 쪽) */
+	label: string;
+	text: string;
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { amountText, dayLabel, deg, kst, weatherWord, windText } from '$lib/format';
+	import { airText, amountText, dayLabel, deg, kst, visText, weatherWord, windText } from '$lib/format';
 	import type { Timeline } from '$lib/types';
 
 	let {
@@ -19,6 +19,8 @@
 	});
 
 	const word = $derived(s ? weatherWord(s) : '');
+	const air = $derived(airText(tl.air));
+	const vis = $derived(visText(tl.fog));
 	const pcp = $derived(s && s.wet ? amountText(s.pcp) : '');
 	const sno = $derived(s && s.sno && s.sno.mm > 0 ? amountText(s.sno, 'cm') : '');
 
@@ -57,6 +59,8 @@
 			{#if windText(s)}<span>{windText(s)}</span>{/if}
 			{#if s.reh != null}<span>습도 {Math.round(s.reh)}%</span>{/if}
 			{#if sno}<span>적설 {sno}</span>{/if}
+			{#if isNow && air}<span>{air}</span>{/if}
+			{#if isNow && vis}<span>{vis}</span>{/if}
 			{#if yText}<span class="muted">{yText}</span>{/if}
 			{#if !isNow}<button type="button" class="pill" onclick={onnow}>지금으로</button>{/if}
 		</div>
@@ -78,6 +82,8 @@
 				{#if windText(s)}<span>{windText(s)}</span>{/if}
 				{#if s.reh != null}<span>습도 {Math.round(s.reh)}%</span>{/if}
 				{#if sno}<span>적설 {sno}</span>{/if}
+				{#if isNow && air}<span>{air}</span>{/if}
+				{#if isNow && vis}<span>{vis}</span>{/if}
 				{#if isNow && yText}<span>{yText}</span>{/if}
 			</div>
 			{#if !isNow && yText}<div class="note">{yText}</div>{/if}
