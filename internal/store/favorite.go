@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -18,6 +17,7 @@ const (
 // Favorite는 서버 즐겨찾기 한 줄과 알림 설정이다.
 type Favorite struct {
 	ID        int64
+	UserID    int64
 	Name      string
 	Region    string // 없으면 ""
 	NX, NY    int
@@ -73,29 +73,38 @@ func (d *DB) MetaSetIfAbsent(ctx context.Context, k, v string) (string, error) {
 
 const metaFavVersion = "favorites_version"
 
-func favVersion(ctx context.Context, q queryer) (int64, error) {
-	v, ok, err := getMeta(ctx, q, metaFavVersion)
-	if err != nil || !ok {
-		return 0, err
+func favVersion(ctx context.Context, q queryer, userID int64) (int64, error) {
+	var v int64
+	err := q.QueryRowContext(ctx, `SELECT fav_version FROM app_user WHERE id=?`, userID).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
 	}
-	return strconv.ParseInt(v, 10, 64)
+	return v, err
 }
 
-func bumpFavVersion(ctx context.Context, q queryer) (int64, error) {
-	v, err := favVersion(ctx, q)
+func bumpFavVersion(ctx context.Context, q queryer, userID int64) (int64, error) {
+	res, err := q.ExecContext(ctx, `UPDATE app_user SET fav_version=fav_version+1 WHERE id=?`, userID)
 	if err != nil {
 		return 0, err
 	}
-	v++
-	return v, setMeta(ctx, q, metaFavVersion, strconv.FormatInt(v, 10))
+	if n, _ := res.RowsAffected(); n != 1 {
+		return 0, ErrNotFound
+	}
+	return favVersion(ctx, q, userID)
 }
 
-func listFavorites(ctx context.Context, q queryer) ([]Favorite, error) {
-	rows, err := q.QueryContext(ctx, `
-		SELECT f.id, f.name, coalesce(f.region, ''), f.nx, f.ny, f.pos, f.created_at,
+func listFavorites(ctx context.Context, q queryer, userID int64) ([]Favorite, error) {
+	sqlq := `
+		SELECT f.id, f.user_id, f.name, coalesce(f.region, ''), f.nx, f.ny, f.pos, f.created_at,
 		       coalesce((SELECT enabled FROM alert_pref WHERE favorite_id=f.id AND kind='soon'), 0),
 		       coalesce((SELECT enabled FROM alert_pref WHERE favorite_id=f.id AND kind='eve'), 0)
-		FROM favorite f ORDER BY f.pos, f.id`)
+		FROM favorite f`
+	var args []any
+	if userID != 0 {
+		sqlq += ` WHERE f.user_id=?`
+		args = append(args, userID)
+	}
+	rows, err := q.QueryContext(ctx, sqlq+` ORDER BY f.pos, f.id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +112,7 @@ func listFavorites(ctx context.Context, q queryer) ([]Favorite, error) {
 	out := []Favorite{}
 	for rows.Next() {
 		var f Favorite
-		if err := rows.Scan(&f.ID, &f.Name, &f.Region, &f.NX, &f.NY, &f.Pos, &f.CreatedAt, &f.Soon, &f.Eve); err != nil {
+		if err := rows.Scan(&f.ID, &f.UserID, &f.Name, &f.Region, &f.NX, &f.NY, &f.Pos, &f.CreatedAt, &f.Soon, &f.Eve); err != nil {
 			return nil, err
 		}
 		out = append(out, f)
@@ -112,23 +121,23 @@ func listFavorites(ctx context.Context, q queryer) ([]Favorite, error) {
 }
 
 // Favorites는 목록(순서대로)과 목록 version이다.
-func (d *DB) Favorites(ctx context.Context) ([]Favorite, int64, error) {
+func (d *DB) Favorites(ctx context.Context, userID int64) ([]Favorite, int64, error) {
 	tx, err := d.R.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, 0, err
 	}
 	defer tx.Rollback()
-	fs, err := listFavorites(ctx, tx)
-	if err != nil {
-		return nil, 0, err
+	fs, err := listFavorites(ctx, tx, userID)
+	if err != nil || userID == 0 {
+		return fs, 0, err
 	}
-	v, err := favVersion(ctx, tx)
+	v, err := favVersion(ctx, tx, userID)
 	return fs, v, err
 }
 
-// Favorite는 id 하나다. 없으면 ErrNotFound.
-func (d *DB) Favorite(ctx context.Context, id int64) (Favorite, error) {
-	fs, _, err := d.Favorites(ctx)
+// Favorite는 그 사용자의 id 하나다. 없으면 ErrNotFound.
+func (d *DB) Favorite(ctx context.Context, userID, id int64) (Favorite, error) {
+	fs, _, err := d.Favorites(ctx, userID)
 	if err != nil {
 		return Favorite{}, err
 	}
@@ -159,13 +168,13 @@ func (d *DB) FavoriteGrids(ctx context.Context) ([][2]int, error) {
 }
 
 // findSame는 같은 장소(region이 있으면 region, 없으면 nx·ny·name)의 id다. 없으면 0.
-func findSame(ctx context.Context, q queryer, in FavInput) (int64, error) {
+func findSame(ctx context.Context, q queryer, userID int64, in FavInput) (int64, error) {
 	var id int64
 	var err error
 	if in.Region != "" {
-		err = q.QueryRowContext(ctx, `SELECT id FROM favorite WHERE region=?`, in.Region).Scan(&id)
+		err = q.QueryRowContext(ctx, `SELECT id FROM favorite WHERE user_id=? AND region=?`, userID, in.Region).Scan(&id)
 	} else {
-		err = q.QueryRowContext(ctx, `SELECT id FROM favorite WHERE region IS NULL AND nx=? AND ny=? AND name=?`, in.NX, in.NY, in.Name).Scan(&id)
+		err = q.QueryRowContext(ctx, `SELECT id FROM favorite WHERE user_id=? AND region IS NULL AND nx=? AND ny=? AND name=?`, userID, in.NX, in.NY, in.Name).Scan(&id)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
@@ -173,17 +182,17 @@ func findSame(ctx context.Context, q queryer, in FavInput) (int64, error) {
 	return id, err
 }
 
-func insertFav(ctx context.Context, q queryer, in FavInput, now time.Time) (int64, error) {
+func insertFav(ctx context.Context, q queryer, userID int64, in FavInput, now time.Time) (int64, error) {
 	var pos int
-	if err := q.QueryRowContext(ctx, `SELECT coalesce(max(pos)+1, 0) FROM favorite`).Scan(&pos); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT coalesce(max(pos)+1, 0) FROM favorite WHERE user_id=?`, userID).Scan(&pos); err != nil {
 		return 0, err
 	}
 	var region any
 	if in.Region != "" {
 		region = in.Region
 	}
-	res, err := q.ExecContext(ctx, `INSERT INTO favorite (name, region, nx, ny, pos, created_at) VALUES (?,?,?,?,?,?)`,
-		in.Name, region, in.NX, in.NY, pos, now.Unix())
+	res, err := q.ExecContext(ctx, `INSERT INTO favorite (user_id, name, region, nx, ny, pos, created_at) VALUES (?,?,?,?,?,?,?)`,
+		userID, in.Name, region, in.NX, in.NY, pos, now.Unix())
 	if err != nil {
 		return 0, err
 	}
@@ -191,28 +200,28 @@ func insertFav(ctx context.Context, q queryer, in FavInput, now time.Time) (int6
 }
 
 // AddFavorite는 즐겨찾기를 추가한다. 같은 장소가 있으면 기존 항목을 돌려주고 created=false(멱등).
-func (d *DB) AddFavorite(ctx context.Context, in FavInput, now time.Time) (f Favorite, created bool, version int64, err error) {
+func (d *DB) AddFavorite(ctx context.Context, userID int64, in FavInput, now time.Time) (f Favorite, created bool, version int64, err error) {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return f, false, 0, err
 	}
 	defer tx.Rollback()
-	id, err := findSame(ctx, tx, in)
+	id, err := findSame(ctx, tx, userID, in)
 	if err != nil {
 		return f, false, 0, err
 	}
 	if id == 0 {
-		if id, err = insertFav(ctx, tx, in, now); err != nil {
+		if id, err = insertFav(ctx, tx, userID, in, now); err != nil {
 			return f, false, 0, err
 		}
 		created = true
-		if version, err = bumpFavVersion(ctx, tx); err != nil {
+		if version, err = bumpFavVersion(ctx, tx, userID); err != nil {
 			return f, false, 0, err
 		}
-	} else if version, err = favVersion(ctx, tx); err != nil {
+	} else if version, err = favVersion(ctx, tx, userID); err != nil {
 		return f, false, 0, err
 	}
-	fs, err := listFavorites(ctx, tx)
+	fs, err := listFavorites(ctx, tx, userID)
 	if err != nil {
 		return f, false, 0, err
 	}
@@ -228,14 +237,14 @@ func (d *DB) AddFavorite(ctx context.Context, in FavInput, now time.Time) (f Fav
 }
 
 // MergeFavorites는 기기의 목록을 서버 목록 뒤에 (없는 것만, 요청 순서대로) 붙인다.
-func (d *DB) MergeFavorites(ctx context.Context, ins []FavInput, now time.Time) (fs []Favorite, version int64, added, existing int, err error) {
+func (d *DB) MergeFavorites(ctx context.Context, userID int64, ins []FavInput, now time.Time) (fs []Favorite, version int64, added, existing int, err error) {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, 0, 0, 0, err
 	}
 	defer tx.Rollback()
 	for _, in := range ins {
-		id, err := findSame(ctx, tx, in)
+		id, err := findSame(ctx, tx, userID, in)
 		if err != nil {
 			return nil, 0, 0, 0, err
 		}
@@ -243,32 +252,32 @@ func (d *DB) MergeFavorites(ctx context.Context, ins []FavInput, now time.Time) 
 			existing++
 			continue
 		}
-		if _, err := insertFav(ctx, tx, in, now); err != nil {
+		if _, err := insertFav(ctx, tx, userID, in, now); err != nil {
 			return nil, 0, 0, 0, err
 		}
 		added++
 	}
 	if added > 0 {
-		if version, err = bumpFavVersion(ctx, tx); err != nil {
+		if version, err = bumpFavVersion(ctx, tx, userID); err != nil {
 			return nil, 0, 0, 0, err
 		}
-	} else if version, err = favVersion(ctx, tx); err != nil {
+	} else if version, err = favVersion(ctx, tx, userID); err != nil {
 		return nil, 0, 0, 0, err
 	}
-	if fs, err = listFavorites(ctx, tx); err != nil {
+	if fs, err = listFavorites(ctx, tx, userID); err != nil {
 		return nil, 0, 0, 0, err
 	}
 	return fs, version, added, existing, tx.Commit()
 }
 
 // DeleteFavorite는 즐겨찾기와 알림 설정을 지운다. 예보·실황·알림 기록은 남긴다.
-func (d *DB) DeleteFavorite(ctx context.Context, id int64) (int64, error) {
+func (d *DB) DeleteFavorite(ctx context.Context, userID, id int64) (int64, error) {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `DELETE FROM favorite WHERE id=?`, id)
+	res, err := tx.ExecContext(ctx, `DELETE FROM favorite WHERE id=? AND user_id=?`, id, userID)
 	if err != nil {
 		return 0, err
 	}
@@ -276,7 +285,7 @@ func (d *DB) DeleteFavorite(ctx context.Context, id int64) (int64, error) {
 		return 0, ErrNotFound
 	}
 	// 남은 항목의 pos를 0부터 다시 매긴다(현재 순서 유지)
-	rest, err := listFavorites(ctx, tx)
+	rest, err := listFavorites(ctx, tx, userID)
 	if err != nil {
 		return 0, err
 	}
@@ -288,7 +297,7 @@ func (d *DB) DeleteFavorite(ctx context.Context, id int64) (int64, error) {
 			return 0, err
 		}
 	}
-	v, err := bumpFavVersion(ctx, tx)
+	v, err := bumpFavVersion(ctx, tx, userID)
 	if err != nil {
 		return 0, err
 	}
@@ -296,13 +305,13 @@ func (d *DB) DeleteFavorite(ctx context.Context, id int64) (int64, error) {
 }
 
 // RenameFavorite는 표시 이름을 바꾼다. 같은 장소 판정(region 없을 때 nx·ny·name)과 겹치면 ErrConflict.
-func (d *DB) RenameFavorite(ctx context.Context, id int64, name string) (Favorite, int64, error) {
+func (d *DB) RenameFavorite(ctx context.Context, userID, id int64, name string) (Favorite, int64, error) {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return Favorite{}, 0, err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `UPDATE favorite SET name=? WHERE id=?`, name, id)
+	res, err := tx.ExecContext(ctx, `UPDATE favorite SET name=? WHERE id=? AND user_id=?`, name, id, userID)
 	if err != nil {
 		if isUniqueErr(err) {
 			return Favorite{}, 0, ErrConflict
@@ -312,11 +321,11 @@ func (d *DB) RenameFavorite(ctx context.Context, id int64, name string) (Favorit
 	if n, _ := res.RowsAffected(); n == 0 {
 		return Favorite{}, 0, ErrNotFound
 	}
-	v, err := bumpFavVersion(ctx, tx)
+	v, err := bumpFavVersion(ctx, tx, userID)
 	if err != nil {
 		return Favorite{}, 0, err
 	}
-	fs, err := listFavorites(ctx, tx)
+	fs, err := listFavorites(ctx, tx, userID)
 	if err != nil {
 		return Favorite{}, 0, err
 	}
@@ -337,17 +346,17 @@ func isUniqueErr(err error) bool {
 
 // ReorderFavorites는 ids 순서로 pos를 다시 매긴다. version이 다르거나 ids가 현재 목록과 다르면
 // ErrConflict와 함께 최신 목록·version을 돌려준다.
-func (d *DB) ReorderFavorites(ctx context.Context, ids []int64, version int64) ([]Favorite, int64, error) {
+func (d *DB) ReorderFavorites(ctx context.Context, userID int64, ids []int64, version int64) ([]Favorite, int64, error) {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer tx.Rollback()
-	cur, err := listFavorites(ctx, tx)
+	cur, err := listFavorites(ctx, tx, userID)
 	if err != nil {
 		return nil, 0, err
 	}
-	v, err := favVersion(ctx, tx)
+	v, err := favVersion(ctx, tx, userID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -373,10 +382,10 @@ func (d *DB) ReorderFavorites(ctx context.Context, ids []int64, version int64) (
 			return nil, 0, err
 		}
 	}
-	if v, err = bumpFavVersion(ctx, tx); err != nil {
+	if v, err = bumpFavVersion(ctx, tx, userID); err != nil {
 		return nil, 0, err
 	}
-	fs, err := listFavorites(ctx, tx)
+	fs, err := listFavorites(ctx, tx, userID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -390,7 +399,7 @@ type AlertPatch struct {
 }
 
 // PatchAlerts는 알림 설정을 바꾼다. 없는 id가 있으면 아무것도 바꾸지 않고 ErrNotFound.
-func (d *DB) PatchAlerts(ctx context.Context, ps []AlertPatch) error {
+func (d *DB) PatchAlerts(ctx context.Context, userID int64, ps []AlertPatch) error {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -398,7 +407,7 @@ func (d *DB) PatchAlerts(ctx context.Context, ps []AlertPatch) error {
 	defer tx.Rollback()
 	for _, p := range ps {
 		var x int
-		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM favorite WHERE id=?`, p.ID).Scan(&x); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM favorite WHERE id=? AND user_id=?`, p.ID, userID).Scan(&x); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}

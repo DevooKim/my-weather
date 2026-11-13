@@ -54,16 +54,16 @@
 	}
 </script>
 
-<Sheet label="관리자 로그인" onclose={() => (app.loginOpen = false)}>
+<Sheet label="로그인" onclose={() => (app.loginOpen = false)}>
 	<div class="body">
-		<h1>관리자 로그인</h1>
-		<p class="lead">로그인하면 즐겨찾기가 서버에 저장되고, 실황 수집과 비 알림을 쓸 수 있습니다.</p>
+		<h1>로그인</h1>
+		<p class="lead">로그인하면 이 계정의 즐겨찾기가 서버에 저장되고, 실황 수집과 비 알림을 쓸 수 있습니다. iPhone은 Face ID, 안드로이드 Chrome은 지문·PIN으로 등록합니다.</p>
 		{#if !passkeySupported()}
 			<p class="err" role="alert">이 브라우저는 패스키를 지원하지 않아요.</p>
 		{/if}
 		<button type="button" class="primary" onclick={login} disabled={!!busy || !passkeySupported()}>
 			<Icon name="faceid" size={22} />
-			{busy === 'login' ? '확인 중…' : '패스키로 로그인 (Face ID)'}
+			{busy === 'login' ? '확인 중…' : '패스키로 로그인'}
 		</button>
 		<div class="or"><span></span>처음이거나 폰을 바꿨다면<span></span></div>
 		<form onsubmit={register}>

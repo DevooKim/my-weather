@@ -1,9 +1,10 @@
-// Package auth는 관리자 1명의 패스키(WebAuthn) 등록·로그인, 일회용 등록 토큰, 세션 쿠키, Origin 검사를 맡는다(설계 §2.8, §4.5).
+// Package auth는 패스키(WebAuthn) 등록·로그인, 일회용 등록 토큰, 세션 쿠키, Origin 검사를 맡는다.
 //
-//   - 사용자 테이블은 없다. user handle은 meta의 webauthn_user_handle(무작위 32바이트)이다.
+//   - 사용자는 여러 명이다. 역할은 admin(관리자)과 member(일반)다. 기존 단일 계정은 마이그레이션에서 관리자가 된다.
 //   - challenge는 메모리에 2분 둔다. 검증 요청의 clientDataJSON에서 challenge를 꺼내 찾고, 찾으면 바로 지운다(한 번만 사용).
-//   - 등록은 일회용 토큰이 있어야 한다. options 단계에서는 확인만 하고, verify에서 같은 트랜잭션으로 소멸시킨다.
+//   - 등록은 일회용 토큰이 있어야 한다. 토큰을 만들 때 사용자를 만들고, verify에서 그 사용자에게 패스키를 붙인다.
 //   - 세션 쿠키 값은 무작위 32바이트, DB에는 SHA-256만 둔다. 30일 슬라이딩(하루 한 번 연장).
+//   - 안드로이드 Credential Manager는 로그인 응답에 userHandle을 비우는 경우가 있다. 그때는 credential id로 사용자를 찾는다.
 package auth
 
 import (
@@ -34,9 +35,8 @@ const (
 	SessionRefresh  = 24 * time.Hour
 	DefaultTokenTTL = 10 * time.Minute
 	MaxTokenTTL     = 24 * time.Hour
-	maxPending      = 256
-	metaUserHandle  = "webauthn_user_handle"
-	RPDisplayName   = "my-weather"
+	maxPending    = 256
+	RPDisplayName = "my-weather"
 )
 
 // 오류
@@ -76,7 +76,6 @@ type Auth struct {
 
 	mu      sync.Mutex
 	pending map[string]*pending // challenge(base64url) → 대기 중인 의식
-	handle  []byte
 }
 
 // New는 인증 서비스를 만든다.
@@ -158,17 +157,46 @@ func HashToken(s string) []byte {
 	return h[:]
 }
 
-// IssueEnrollToken은 등록 토큰을 만들어 해시만 저장하고, 토큰 원문과 만료 시각을 돌려준다(CLI용).
-func IssueEnrollToken(ctx context.Context, db *store.DB, ttl time.Duration, revoke bool, now time.Time) (string, time.Time, error) {
+// IssueEnrollToken은 등록 토큰을 만들어 해시만 저장하고, 토큰 원문과 만료 시각을 돌려준다.
+// role이 비어 있으면 관리자다. revoke면 기존 관리자(없으면 새로 만든 관리자)의 패스키를 등록 성공 때 지운다.
+func IssueEnrollToken(ctx context.Context, db *store.DB, ttl time.Duration, revoke bool, role string, now time.Time) (string, time.Time, error) {
+	return IssueEnrollTokenAs(ctx, db, ttl, revoke, role, "cli", now)
+}
+
+// IssueEnrollTokenAs는 source를 지정하는 IssueEnrollToken이다.
+func IssueEnrollTokenAs(ctx context.Context, db *store.DB, ttl time.Duration, revoke bool, role, source string, now time.Time) (string, time.Time, error) {
 	if ttl <= 0 || ttl > MaxTokenTTL {
 		return "", time.Time{}, fmt.Errorf("enroll-token: ttl must be in (0, %s]", MaxTokenTTL)
+	}
+	if role == "" {
+		role = store.RoleAdmin
+	}
+	if !store.ValidRole(role) {
+		return "", time.Time{}, fmt.Errorf("enroll-token: role must be admin or member")
+	}
+	var user store.User
+	var err error
+	if revoke {
+		user, err = db.OldestAdmin(ctx)
+		if errors.Is(err, store.ErrNotFound) {
+			user, err = db.CreateUser(ctx, store.RoleAdmin, now)
+		}
+		role = store.RoleAdmin
+	} else {
+		user, err = db.CreateUser(ctx, role, now)
+	}
+	if err != nil {
+		return "", time.Time{}, err
 	}
 	tok, err := NewToken()
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	exp := now.Add(ttl)
-	if err := db.InsertEnrollToken(ctx, HashToken(tok), exp, revoke, "cli", now); err != nil {
+	if source == "" {
+		source = "cli"
+	}
+	if err := db.InsertEnrollToken(ctx, HashToken(tok), exp, revoke, role, user.ID, source, now); err != nil {
 		return "", time.Time{}, err
 	}
 	return tok, exp, nil
@@ -176,40 +204,17 @@ func IssueEnrollToken(ctx context.Context, db *store.DB, ttl time.Duration, revo
 
 // --- 사용자 ---
 
-type admin struct {
-	id    []byte
-	creds []webauthn.Credential
+type waUser struct {
+	id      []byte
+	name    string
+	display string
+	creds   []webauthn.Credential
 }
 
-func (u *admin) WebAuthnID() []byte                         { return u.id }
-func (u *admin) WebAuthnName() string                       { return "admin" }
-func (u *admin) WebAuthnDisplayName() string                { return "관리자" }
-func (u *admin) WebAuthnCredentials() []webauthn.Credential { return u.creds }
-
-func (a *Auth) userHandle(ctx context.Context) ([]byte, error) {
-	a.mu.Lock()
-	h := a.handle
-	a.mu.Unlock()
-	if h != nil {
-		return h, nil
-	}
-	var b [32]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return nil, err
-	}
-	v, err := a.db.MetaSetIfAbsent(ctx, metaUserHandle, base64.RawURLEncoding.EncodeToString(b[:]))
-	if err != nil {
-		return nil, err
-	}
-	h, err = base64.RawURLEncoding.DecodeString(v)
-	if err != nil || len(h) == 0 {
-		return nil, fmt.Errorf("auth: bad %s in meta", metaUserHandle)
-	}
-	a.mu.Lock()
-	a.handle = h
-	a.mu.Unlock()
-	return h, nil
-}
+func (u *waUser) WebAuthnID() []byte                         { return u.id }
+func (u *waUser) WebAuthnName() string                       { return u.name }
+func (u *waUser) WebAuthnDisplayName() string                { return u.display }
+func (u *waUser) WebAuthnCredentials() []webauthn.Credential { return u.creds }
 
 func toCredential(p store.Passkey) webauthn.Credential {
 	var tr []protocol.AuthenticatorTransport
@@ -225,20 +230,16 @@ func toCredential(p store.Passkey) webauthn.Credential {
 	}
 }
 
-func (a *Auth) loadUser(ctx context.Context) (*admin, error) {
-	h, err := a.userHandle(ctx)
+func (a *Auth) loadUser(ctx context.Context, u store.User) (*waUser, error) {
+	ps, err := a.db.Passkeys(ctx, u.ID)
 	if err != nil {
 		return nil, err
 	}
-	ps, err := a.db.Passkeys(ctx)
-	if err != nil {
-		return nil, err
-	}
-	u := &admin{id: h}
+	out := &waUser{id: u.Handle, name: fmt.Sprintf("%s-%d", u.Role, u.ID), display: u.Name}
 	for _, p := range ps {
-		u.creds = append(u.creds, toCredential(p))
+		out.creds = append(out.creds, toCredential(p))
 	}
-	return u, nil
+	return out, nil
 }
 
 // --- 대기 중인 의식 ---
@@ -285,7 +286,11 @@ func (a *Auth) BeginRegistration(ctx context.Context, token, label string) (*pro
 	if err != nil {
 		return nil, err
 	}
-	u, err := a.loadUser(ctx)
+	owner, err := a.db.UserByID(ctx, tok.UserID)
+	if err != nil {
+		return nil, err
+	}
+	u, err := a.loadUser(ctx, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +332,18 @@ func (a *Auth) FinishRegistration(ctx context.Context, token string, credJSON []
 	if !bytes.Equal(th, p.tokenHash) {
 		return Result{}, ErrBadToken
 	}
-	u, err := a.loadUser(ctx)
+	tok, err := a.db.ValidEnrollToken(ctx, th, a.now())
+	if errors.Is(err, store.ErrNotFound) {
+		return Result{}, ErrBadToken
+	}
+	if err != nil {
+		return Result{}, err
+	}
+	owner, err := a.db.UserByID(ctx, tok.UserID)
+	if err != nil {
+		return Result{}, err
+	}
+	u, err := a.loadUser(ctx, owner)
 	if err != nil {
 		return Result{}, err
 	}
@@ -388,15 +404,21 @@ func (a *Auth) FinishLogin(ctx context.Context, credJSON []byte, userAgent strin
 	if err != nil {
 		return Result{}, err
 	}
-	u, err := a.loadUser(ctx)
-	if err != nil {
-		return Result{}, err
-	}
 	handler := func(rawID, userHandle []byte) (webauthn.User, error) {
-		if !bytes.Equal(userHandle, u.id) {
-			return nil, errors.New("unknown user handle")
+		var owner store.User
+		var err error
+		switch {
+		case len(userHandle) > 0:
+			owner, err = a.db.UserByHandle(ctx, userHandle)
+		default:
+			// Android Credential Manager는 discoverable 로그인에서도 userHandle을 비울 수 있다.
+			a.log.Info("auth: login without user handle, looking up credential")
+			owner, err = a.db.UserByCredID(ctx, rawID)
 		}
-		return u, nil
+		if err != nil {
+			return nil, err
+		}
+		return a.loadUser(ctx, owner)
 	}
 	_, cred, err := a.wa.ValidatePasskeyLogin(handler, p.sd, parsed)
 	if err != nil {
@@ -416,7 +438,11 @@ func (a *Auth) FinishLogin(ctx context.Context, credJSON []byte, userAgent strin
 		return Result{}, err
 	}
 	exp := now.Add(SessionTTL)
-	if err := a.db.CreateSession(ctx, store.NewSession{TokenHash: ch, CredID: cred.ID, ExpiresAt: exp, UserAgent: trimUA(userAgent)}, now); err != nil {
+	owner, err := a.db.UserByCredID(ctx, cred.ID)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := a.db.CreateSession(ctx, store.NewSession{TokenHash: ch, CredID: cred.ID, UserID: owner.ID, ExpiresAt: exp, UserAgent: trimUA(userAgent)}, now); err != nil {
 		return Result{}, err
 	}
 	return Result{Passkey: store.Passkey{CredID: cred.ID}, Cookie: cookie, ExpiresAt: exp}, nil

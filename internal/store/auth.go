@@ -10,6 +10,7 @@ import (
 // Passkey는 등록된 패스키 한 줄이다.
 type Passkey struct {
 	CredID          []byte
+	UserID          int64
 	PublicKey       []byte
 	SignCount       uint32
 	AAGUID          []byte
@@ -24,12 +25,18 @@ type Passkey struct {
 	LastUsedAt      int64 // 0 = 없음
 }
 
-// Passkeys는 등록 순서대로 모든 패스키다.
-func (d *DB) Passkeys(ctx context.Context) ([]Passkey, error) {
-	rows, err := d.R.QueryContext(ctx, `
+// Passkeys는 등록 순서대로 패스키다. userID가 0이면 전체.
+func (d *DB) Passkeys(ctx context.Context, userID int64) ([]Passkey, error) {
+	q := `
 		SELECT cred_id, public_key, sign_count, aaguid, coalesce(transports,''), coalesce(backup_eligible,0), coalesce(backup_state,0),
-		       coalesce(user_verified,0), coalesce(attestation_type,''), clone_warning, coalesce(label,''), created_at, coalesce(last_used_at,0)
-		FROM passkey ORDER BY created_at, cred_id`)
+		       coalesce(user_verified,0), coalesce(attestation_type,''), clone_warning, coalesce(label,''), coalesce(user_id,0), created_at, coalesce(last_used_at,0)
+		FROM passkey`
+	var args []any
+	if userID != 0 {
+		q += ` WHERE user_id=?`
+		args = append(args, userID)
+	}
+	rows, err := d.R.QueryContext(ctx, q+` ORDER BY created_at, cred_id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +45,7 @@ func (d *DB) Passkeys(ctx context.Context) ([]Passkey, error) {
 	for rows.Next() {
 		var p Passkey
 		if err := rows.Scan(&p.CredID, &p.PublicKey, &p.SignCount, &p.AAGUID, &p.Transports, &p.BackupEligible, &p.BackupState,
-			&p.UserVerified, &p.AttestationType, &p.CloneWarning, &p.Label, &p.CreatedAt, &p.LastUsedAt); err != nil {
+			&p.UserVerified, &p.AttestationType, &p.CloneWarning, &p.Label, &p.UserID, &p.CreatedAt, &p.LastUsedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -47,9 +54,9 @@ func (d *DB) Passkeys(ctx context.Context) ([]Passkey, error) {
 }
 
 // PasskeyCount는 패스키 수다.
-func (d *DB) PasskeyCount(ctx context.Context) (int, error) {
+func (d *DB) PasskeyCount(ctx context.Context, userID int64) (int, error) {
 	var n int
-	err := d.R.QueryRowContext(ctx, `SELECT count(*) FROM passkey`).Scan(&n)
+	err := d.R.QueryRowContext(ctx, `SELECT count(*) FROM passkey WHERE user_id=?`, userID).Scan(&n)
 	return n, err
 }
 
@@ -60,19 +67,19 @@ func (d *DB) UpdatePasskeyUse(ctx context.Context, credID []byte, signCount uint
 	return err
 }
 
-// DeletePasskey는 패스키 하나와 그 패스키로 만든 세션을 지운다. 마지막 하나면 ErrConflict, 없으면 ErrNotFound.
-func (d *DB) DeletePasskey(ctx context.Context, credID []byte) error {
+// DeletePasskey는 그 사용자의 패스키 하나와 그 패스키로 만든 세션을 지운다. 마지막 하나면 ErrConflict, 없으면 ErrNotFound.
+func (d *DB) DeletePasskey(ctx context.Context, userID int64, credID []byte) error {
 	tx, err := d.W.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	var n int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM passkey`).Scan(&n); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM passkey WHERE user_id=?`, userID).Scan(&n); err != nil {
 		return err
 	}
 	var x int
-	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM passkey WHERE cred_id=?`, credID).Scan(&x); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM passkey WHERE cred_id=? AND user_id=?`, credID, userID).Scan(&x); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -94,6 +101,9 @@ func (d *DB) DeletePasskey(ctx context.Context, credID []byte) error {
 type Session struct {
 	TokenHash  []byte
 	CredID     []byte
+	UserID     int64
+	Role       string
+	Name       string
 	CreatedAt  int64
 	ExpiresAt  int64
 	LastSeenAt int64
@@ -103,13 +113,14 @@ type Session struct {
 type NewSession struct {
 	TokenHash []byte
 	CredID    []byte
+	UserID    int64
 	ExpiresAt time.Time
 	UserAgent string
 }
 
 func insertSession(ctx context.Context, q queryer, s NewSession, now time.Time) error {
-	_, err := q.ExecContext(ctx, `INSERT INTO session (token_hash, cred_id, created_at, expires_at, last_seen_at, user_agent) VALUES (?,?,?,?,?,?)`,
-		s.TokenHash, s.CredID, now.Unix(), s.ExpiresAt.Unix(), now.Unix(), nullStr(s.UserAgent))
+	_, err := q.ExecContext(ctx, `INSERT INTO session (token_hash, cred_id, user_id, created_at, expires_at, last_seen_at, user_agent) VALUES (?,?,?,?,?,?,?)`,
+		s.TokenHash, s.CredID, s.UserID, now.Unix(), s.ExpiresAt.Unix(), now.Unix(), nullStr(s.UserAgent))
 	return err
 }
 
@@ -121,8 +132,11 @@ func (d *DB) CreateSession(ctx context.Context, s NewSession, now time.Time) err
 // SessionByHash는 만료되지 않은 세션이다. 없으면 ErrNotFound.
 func (d *DB) SessionByHash(ctx context.Context, h []byte, now time.Time) (Session, error) {
 	var s Session
-	err := d.R.QueryRowContext(ctx, `SELECT token_hash, cred_id, created_at, expires_at, last_seen_at FROM session WHERE token_hash=? AND expires_at>?`,
-		h, now.Unix()).Scan(&s.TokenHash, &s.CredID, &s.CreatedAt, &s.ExpiresAt, &s.LastSeenAt)
+	err := d.R.QueryRowContext(ctx, `
+		SELECT s.token_hash, s.cred_id, s.user_id, u.role, u.name, s.created_at, s.expires_at, s.last_seen_at
+		FROM session s JOIN app_user u ON u.id=s.user_id
+		WHERE s.token_hash=? AND s.expires_at>?`,
+		h, now.Unix()).Scan(&s.TokenHash, &s.CredID, &s.UserID, &s.Role, &s.Name, &s.CreatedAt, &s.ExpiresAt, &s.LastSeenAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return s, ErrNotFound
 	}
@@ -147,20 +161,22 @@ type EnrollToken struct {
 	ExpiresAt      int64
 	UsedAt         int64
 	RevokeExisting bool
+	Role           string
+	UserID         int64
 }
 
-// InsertEnrollToken은 등록 토큰을 저장한다(해시만).
-func (d *DB) InsertEnrollToken(ctx context.Context, h []byte, expires time.Time, revoke bool, source string, now time.Time) error {
-	_, err := d.W.ExecContext(ctx, `INSERT INTO enroll_token (token_hash, created_at, expires_at, revoke_existing, source) VALUES (?,?,?,?,?)`,
-		h, now.Unix(), expires.Unix(), revoke, source)
+// InsertEnrollToken은 등록 토큰을 저장한다(해시만). userID는 이 코드로 등록할 사용자다.
+func (d *DB) InsertEnrollToken(ctx context.Context, h []byte, expires time.Time, revoke bool, role string, userID int64, source string, now time.Time) error {
+	_, err := d.W.ExecContext(ctx, `INSERT INTO enroll_token (token_hash, created_at, expires_at, revoke_existing, role, user_id, source) VALUES (?,?,?,?,?,?,?)`,
+		h, now.Unix(), expires.Unix(), revoke, role, userID, source)
 	return err
 }
 
 // ValidEnrollToken은 쓰지 않았고 만료되지 않은 토큰이다. 없으면 ErrNotFound.
 func (d *DB) ValidEnrollToken(ctx context.Context, h []byte, now time.Time) (EnrollToken, error) {
 	var t EnrollToken
-	err := d.R.QueryRowContext(ctx, `SELECT token_hash, expires_at, revoke_existing FROM enroll_token WHERE token_hash=? AND used_at IS NULL AND expires_at>?`,
-		h, now.Unix()).Scan(&t.TokenHash, &t.ExpiresAt, &t.RevokeExisting)
+	err := d.R.QueryRowContext(ctx, `SELECT token_hash, expires_at, revoke_existing, role, coalesce(user_id,0) FROM enroll_token WHERE token_hash=? AND used_at IS NULL AND expires_at>?`,
+		h, now.Unix()).Scan(&t.TokenHash, &t.ExpiresAt, &t.RevokeExisting, &t.Role, &t.UserID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, ErrNotFound
 	}
@@ -175,7 +191,8 @@ func (d *DB) Enroll(ctx context.Context, tokenHash []byte, p Passkey, s NewSessi
 		return false, err
 	}
 	defer tx.Rollback()
-	if err := tx.QueryRowContext(ctx, `SELECT revoke_existing FROM enroll_token WHERE token_hash=?`, tokenHash).Scan(&revoked); err != nil {
+	var userID int64
+	if err := tx.QueryRowContext(ctx, `SELECT revoke_existing, coalesce(user_id,0) FROM enroll_token WHERE token_hash=?`, tokenHash).Scan(&revoked, &userID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, ErrNotFound
 		}
@@ -190,24 +207,25 @@ func (d *DB) Enroll(ctx context.Context, tokenHash []byte, p Passkey, s NewSessi
 		return false, ErrNotFound
 	}
 	if revoked {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM passkey`); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM passkey WHERE user_id=?`, userID); err != nil {
 			return false, err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM session`); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM session WHERE user_id=?`, userID); err != nil {
 			return false, err
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO passkey (cred_id, public_key, sign_count, aaguid, transports, backup_eligible, backup_state, user_verified,
-		                     attestation_type, label, created_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		                     attestation_type, label, user_id, created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		p.CredID, p.PublicKey, p.SignCount, p.AAGUID, nullStr(p.Transports), p.BackupEligible, p.BackupState, p.UserVerified,
-		nullStr(p.AttestationType), nullStr(p.Label), now.Unix()); err != nil {
+		nullStr(p.AttestationType), nullStr(p.Label), userID, now.Unix()); err != nil {
 		if isUniqueErr(err) {
 			return false, ErrConflict
 		}
 		return false, err
 	}
+	s.UserID = userID
 	if err := insertSession(ctx, tx, s, now); err != nil {
 		return false, err
 	}

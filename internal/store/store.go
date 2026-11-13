@@ -147,6 +147,9 @@ func (d *DB) Migrate(ctx context.Context) (from, to int, err error) {
 		}
 		to = m.n
 	}
+	if err := d.backfillUsers(ctx); err != nil {
+		return from, to, fmt.Errorf("backfill users: %w", err)
+	}
 	return from, to, nil
 }
 

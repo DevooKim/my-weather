@@ -125,8 +125,8 @@
 </script>
 
 <div class="list {variant}">
-	{#if app.admin && variant === 'sheet'}
-		<div class="badge-row"><span class="badge">관리자</span></div>
+	{#if app.signedIn && variant === 'sheet'}
+		<div class="badge-row"><span class="badge">{app.admin ? '관리자' : '사용자'}</span></div>
 	{/if}
 	<label class="search" class:active={q.length > 0}>
 		<Icon name="search" size={18} color="var(--text-3)" />
@@ -223,7 +223,7 @@
 						count={app.favs.length}
 						current={samePlace(f, app.place)}
 						nowText={nowText(f)}
-						admin={app.admin}
+						admin={app.signedIn}
 						shift={shift(i)}
 						dragging={dragFrom === i}
 						card={variant === 'aside'}

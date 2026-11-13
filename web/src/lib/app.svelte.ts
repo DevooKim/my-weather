@@ -22,7 +22,9 @@ class AppState {
 	recent = $state<Place[]>([]);
 	now = $state<Record<string, NowItem>>({});
 
-	admin = $state(false);
+	signedIn: boolean = $state(false);
+	admin: boolean = $state(false);
+	role: 'admin' | 'member' | '' = $state('');
 	authKnown = $state(false);
 
 	sheetOpen = $state(false);
@@ -189,7 +191,7 @@ class AppState {
 
 	async toggleStar(p: Place) {
 		const existing = this.favOf(p);
-		if (!this.admin) {
+		if (!this.signedIn) {
 			if (existing) this.#setFavs(this.favs.filter((f) => !samePlace(f, p)));
 			else this.#setFavs([...this.favs, { ...p, id: undefined, alerts: undefined }]);
 			this.refreshNow();
@@ -217,7 +219,7 @@ class AppState {
 	async reorder(next: Place[]) {
 		const prev = this.favs;
 		this.#setFavs(next);
-		if (!this.admin) return;
+		if (!this.signedIn) return;
 		const ids = next.map((f) => f.id).filter((x): x is number => x != null);
 		try {
 			const r = await api.orderFavorites(ids, this.favVersion ?? 0);
@@ -236,7 +238,7 @@ class AppState {
 	async rename(p: Place, name: string) {
 		const f = this.favOf(p);
 		if (!f) return;
-		if (!this.admin || f.id == null) {
+		if (!this.signedIn || f.id == null) {
 			this.#setFavs(this.favs.map((x) => (samePlace(x, p) ? { ...x, name } : x)));
 			return;
 		}
@@ -270,7 +272,9 @@ class AppState {
 
 	#serverFail(e: unknown) {
 		if (e instanceof ApiError && e.status === 401) {
+			this.signedIn = false;
 			this.admin = false;
+			this.role = '';
 			this.showToast('로그인이 풀렸어요. 메뉴의 정보 칸을 빠르게 세 번 눌러 다시 로그인하세요.');
 			return;
 		}
@@ -304,12 +308,12 @@ class AppState {
 	async checkAuth() {
 		try {
 			const me = await api.me();
-			this.admin = !!me.admin;
+			this.#applyMe(me);
 		} catch {
-			this.admin = false; // 404(아직 없음)·오프라인 모두 비로그인으로 본다
+			this.#applyMe({ admin: false });
 		}
 		this.authKnown = true;
-		if (this.admin) await this.syncServerFavs();
+		if (this.signedIn) await this.syncServerFavs();
 		this.openFromUrl();
 	}
 
@@ -332,9 +336,19 @@ class AppState {
 	}
 
 	/** 로그인 직후: 이 브라우저의 별 목록을 서버와 합친다 (§2.5 merge) */
+	#applyMe(me: { admin: boolean; role?: 'admin' | 'member' }) {
+		this.role = me.role ?? '';
+		this.admin = me.role === 'admin' || (!me.role && !!me.admin);
+		this.signedIn = this.role === 'admin' || this.role === 'member' || !!me.admin;
+	}
+
 	async afterLogin() {
-		this.admin = true;
 		this.loginOpen = false;
+		try {
+			this.#applyMe(await api.me());
+		} catch {
+			this.signedIn = true;
+		}
 		try {
 			const local = this.favs.map((f) => ({ name: f.name, region: f.region, nx: f.nx, ny: f.ny }));
 			const r = await api.mergeFavorites(local);
@@ -353,7 +367,9 @@ class AppState {
 		} catch {
 			/* 쿠키가 이미 없어도 로그아웃으로 본다 */
 		}
+		this.signedIn = false;
 		this.admin = false;
+		this.role = '';
 		// 합친 별 목록은 그 브라우저에 그대로 둔다(§2). 서버 id·알림 표시만 지운다.
 		this.#setFavs(this.favs.map((f) => ({ name: f.name, full: f.full, region: f.region, nx: f.nx, ny: f.ny })));
 		if (this.place) this.place = { ...this.place, id: undefined, alerts: undefined };

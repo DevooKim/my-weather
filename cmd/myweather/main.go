@@ -54,8 +54,9 @@ func usage() {
 commands:
   migrate          apply embedded SQL migrations to the DB
   serve [--once]   run the KMA collector, HTTP API and alerts (--once: collect due work once and exit, no HTTP)
-  enroll-token [--ttl 10m] [--revoke-existing]
-                   issue a one-time passkey enrollment token (max 24h; --revoke-existing deletes old passkeys/sessions on use)
+  enroll-token [--ttl 10m] [--role admin|member] [--revoke-existing]
+                   issue a one-time passkey enrollment token (max 24h; default role admin;
+                   --revoke-existing replaces the oldest admin's passkeys and sessions)
   vapid-keygen [--out FILE]
                    generate a VAPID key pair (stdout, or FILE with mode 0600; refuses to overwrite)
   backup --to P    online backup (VACUUM INTO) + integrity_check
@@ -332,7 +333,8 @@ func runBackup(ctx context.Context, args []string) error {
 func runEnrollToken(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("enroll-token", flag.ExitOnError)
 	ttl := fs.Duration("ttl", auth.DefaultTokenTTL, "token lifetime (max 24h)")
-	revoke := fs.Bool("revoke-existing", false, "on successful enrollment, delete all existing passkeys and sessions (lost phone)")
+	role := fs.String("role", "admin", "admin or member")
+	revoke := fs.Bool("revoke-existing", false, "on successful enrollment, replace the oldest admin passkeys and sessions")
 	fs.Parse(args)
 	cfg, err := config.Load(nil)
 	if err != nil {
@@ -343,7 +345,7 @@ func runEnrollToken(ctx context.Context, args []string) error {
 		return err
 	}
 	defer db.Close()
-	tok, exp, err := auth.IssueEnrollToken(ctx, db, *ttl, *revoke, kst.Now())
+	tok, exp, err := auth.IssueEnrollToken(ctx, db, *ttl, *revoke, *role, kst.Now())
 	if err != nil {
 		return err
 	}

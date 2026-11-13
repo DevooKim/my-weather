@@ -57,7 +57,7 @@ func TestMigrateIdempotentAndPragmas(t *testing.T) {
 		names = append(names, n)
 	}
 	rows.Close()
-	want := []string{"alert_event", "alert_pref", "enroll_token", "favorite", "fcst_value", "fcst_version", "grid_seen",
+	want := []string{"alert_event", "alert_pref", "app_user", "enroll_token", "favorite", "fcst_value", "fcst_version", "grid_seen",
 		"kma_call", "meta", "obs_value", "passkey", "push_sub", "session"}
 	if len(names) != len(want) {
 		t.Fatalf("tables=%v", names)
@@ -225,21 +225,25 @@ func TestDeleteFavoriteRenumbersAfterReorder(t *testing.T) {
 	d := openTest(t)
 	now := time.Now()
 	var ids []int64
+	u, err := d.CreateUser(ctx, RoleAdmin, now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i, n := range []string{"a", "b", "c", "d"} {
-		f, _, _, err := d.AddFavorite(ctx, FavInput{Name: n, NX: 60 + i, NY: 120}, now)
+		f, _, _, err := d.AddFavorite(ctx, u.ID, FavInput{Name: n, NX: 60 + i, NY: 120}, now)
 		if err != nil {
 			t.Fatal(err)
 		}
 		ids = append(ids, f.ID)
 	}
-	_, v, err := d.ReorderFavorites(ctx, []int64{ids[3], ids[2], ids[1], ids[0]}, 4)
+	_, v, err := d.ReorderFavorites(ctx, u.ID, []int64{ids[3], ids[2], ids[1], ids[0]}, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.DeleteFavorite(ctx, ids[2]); err != nil { // 두 번째(pos 1) 삭제
+	if _, err := d.DeleteFavorite(ctx, u.ID, ids[2]); err != nil { // 두 번째(pos 1) 삭제
 		t.Fatal(err)
 	}
-	fs, v2, _ := d.Favorites(ctx)
+	fs, v2, _ := d.Favorites(ctx, u.ID)
 	if v2 != v+1 || len(fs) != 3 {
 		t.Fatalf("v=%d→%d n=%d", v, v2, len(fs))
 	}

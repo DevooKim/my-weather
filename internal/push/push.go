@@ -142,7 +142,16 @@ func subscriber(subject string) string {
 
 // SendAll은 endpoint(비면 모든 구독)로 보낸다.
 func (s *Sender) SendAll(ctx context.Context, m Message, endpoint string) (Report, error) {
-	subs, err := s.o.DB.PushSubs(ctx, endpoint)
+	return s.sendSubs(ctx, m, func() ([]store.PushSub, error) { return s.o.DB.PushSubs(ctx, endpoint) })
+}
+
+// SendUser는 그 사용자의 구독으로만 보낸다. endpoint가 있으면 그 기기만.
+func (s *Sender) SendUser(ctx context.Context, m Message, userID int64, endpoint string) (Report, error) {
+	return s.sendSubs(ctx, m, func() ([]store.PushSub, error) { return s.o.DB.PushSubsFor(ctx, userID, endpoint) })
+}
+
+func (s *Sender) sendSubs(ctx context.Context, m Message, load func() ([]store.PushSub, error)) (Report, error) {
+	subs, err := load()
 	if err != nil {
 		return Report{}, err
 	}

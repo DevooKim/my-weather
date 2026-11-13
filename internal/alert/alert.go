@@ -45,7 +45,7 @@ var DefaultRules = Rules{SoonPopMin: 30, EvePopMin: 60, Cooldown: 6 * time.Hour,
 
 // Notifier는 푸시 발송기다(*push.Sender).
 type Notifier interface {
-	SendAll(ctx context.Context, m push.Message, endpoint string) (push.Report, error)
+	SendUser(ctx context.Context, m push.Message, userID int64, endpoint string) (push.Report, error)
 }
 
 // Options는 엔진 설정이다.
@@ -181,7 +181,7 @@ func precipWord(pty int) string {
 }
 
 func (e *Engine) favoritesAt(ctx context.Context, nx, ny int, kind string) ([]store.Favorite, error) {
-	fs, _, err := e.o.DB.Favorites(ctx)
+	fs, _, err := e.o.DB.Favorites(ctx, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +199,7 @@ func (e *Engine) send(ctx context.Context, f store.Favorite, kind string, key in
 	if e.o.Push == nil {
 		e.o.Log.Warn("alert: push not configured, recorded only", "fav", f.ID, "kind", kind, "body", m.Body)
 	} else {
-		rep, err := e.o.Push.SendAll(ctx, m, "")
+		rep, err := e.o.Push.SendUser(ctx, m, f.UserID, "")
 		if err != nil {
 			e.o.Log.Error("alert: send", "fav", f.ID, "kind", kind, "err", err)
 		}

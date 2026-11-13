@@ -14,6 +14,7 @@ type PushSub struct {
 	P256dh    string
 	Auth      string
 	Label     string
+	UserID    int64
 	CreatedAt int64
 	LastOKAt  int64
 	FailCount int
@@ -21,11 +22,15 @@ type PushSub struct {
 
 // UpsertPushSub는 구독을 저장한다. 같은 endpoint면 키·이름만 갱신한다.
 func (d *DB) UpsertPushSub(ctx context.Context, s PushSub, now time.Time) (PushSub, error) {
+	var userID any
+	if s.UserID != 0 {
+		userID = s.UserID
+	}
 	_, err := d.W.ExecContext(ctx, `
-		INSERT INTO push_sub (endpoint, p256dh, auth, label, created_at) VALUES (?,?,?,?,?)
+		INSERT INTO push_sub (endpoint, p256dh, auth, label, user_id, created_at) VALUES (?,?,?,?,?,?)
 		ON CONFLICT (endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth,
-			label=coalesce(excluded.label, push_sub.label), fail_count=0`,
-		s.Endpoint, s.P256dh, s.Auth, nullStr(s.Label), now.Unix())
+			label=coalesce(excluded.label, push_sub.label), user_id=coalesce(excluded.user_id, push_sub.user_id), fail_count=0`,
+		s.Endpoint, s.P256dh, s.Auth, nullStr(s.Label), userID, now.Unix())
 	if err != nil {
 		return PushSub{}, err
 	}
@@ -70,6 +75,37 @@ func (d *DB) PushSubCount(ctx context.Context) (int, error) {
 func (d *DB) DeletePushSub(ctx context.Context, endpoint string) error {
 	_, err := d.W.ExecContext(ctx, `DELETE FROM push_sub WHERE endpoint=?`, endpoint)
 	return err
+}
+
+// DeleteUserPushSub는 그 사용자의 구독만 지운다.
+func (d *DB) DeleteUserPushSub(ctx context.Context, userID int64, endpoint string) error {
+	_, err := d.W.ExecContext(ctx, `DELETE FROM push_sub WHERE endpoint=? AND user_id=?`, endpoint, userID)
+	return err
+}
+
+// PushSubsFor는 한 사용자의 구독이다. endpoint가 있으면 그 하나만.
+func (d *DB) PushSubsFor(ctx context.Context, userID int64, endpoint string) ([]PushSub, error) {
+	q := `SELECT id, endpoint, p256dh, auth, coalesce(label,''), created_at, coalesce(last_ok_at,0), fail_count FROM push_sub WHERE user_id=?`
+	args := []any{userID}
+	if endpoint != "" {
+		q += ` AND endpoint=?`
+		args = append(args, endpoint)
+	}
+	rows, err := d.R.QueryContext(ctx, q+` ORDER BY id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PushSub
+	for rows.Next() {
+		var s PushSub
+		if err := rows.Scan(&s.ID, &s.Endpoint, &s.P256dh, &s.Auth, &s.Label, &s.CreatedAt, &s.LastOKAt, &s.FailCount); err != nil {
+			return nil, err
+		}
+		s.UserID = userID
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 // PushOK는 발송 성공을 기록한다.

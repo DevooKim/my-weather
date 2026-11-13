@@ -57,8 +57,8 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) (store.Session,
 	return s.o.Auth.Session(w, r)
 }
 
-// admin은 관리자 세션이 필요한 핸들러를 감싼다(없으면 401). 인증 설정이 없으면 503.
-func (s *Server) admin(h http.HandlerFunc) http.HandlerFunc {
+// signedIn은 로그인한 사용자 세션이 필요한 핸들러를 감싼다(없으면 401). 인증 설정이 없으면 503.
+func (s *Server) signedIn(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.o.Auth == nil {
 			notConfigured(w, "로그인")
@@ -72,6 +72,23 @@ func (s *Server) admin(h http.HandlerFunc) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "private, no-store")
 		h(w, r.WithContext(context.WithValue(r.Context(), sessKey{}, sess)))
 	}
+}
+
+// admin은 관리자 역할이 필요한 핸들러를 감싼다.
+func (s *Server) admin(h http.HandlerFunc) http.HandlerFunc {
+	return s.signedIn(func(w http.ResponseWriter, r *http.Request) {
+		sess, _ := s.session(w, r)
+		if sess.Role != store.RoleAdmin {
+			writeErr(w, http.StatusForbidden, "forbidden", "관리자만 할 수 있어요.", 0)
+			return
+		}
+		h(w, r)
+	})
+}
+
+func (s *Server) uid(w http.ResponseWriter, r *http.Request) int64 {
+	sess, _ := s.session(w, r)
+	return sess.UserID
 }
 
 // checkUnsafe: 상태를 바꾸는 /api/ 요청은 Origin이 설정값과 같아야 한다(없거나 다르면 403). 인증 설정이 없으면 503.
@@ -261,16 +278,38 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"admin": false})
 		return
 	}
-	n, err := s.o.DB.PasskeyCount(r.Context())
+	sess, _ := s.session(w, r)
+	n, err := s.o.DB.PasskeyCount(r.Context(), sess.UserID)
 	if err != nil {
 		s.internal(w, "auth: me", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"admin": true, "passkeys": n})
+	writeJSON(w, http.StatusOK, map[string]any{"admin": sess.Role == store.RoleAdmin, "role": sess.Role, "name": sess.Name, "passkeys": n})
 }
 
-func (s *Server) passkeyList(ctx context.Context, cur []byte) ([]passkeyJSON, error) {
-	ps, err := s.o.DB.Passkeys(ctx)
+func (s *Server) issueEnrollToken(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Role string `json:"role"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	role := strings.TrimSpace(req.Role)
+	if !store.ValidRole(role) {
+		writeErr(w, http.StatusBadRequest, "bad_request", "권한은 admin 또는 member예요.", 0)
+		return
+	}
+	tok, exp, err := auth.IssueEnrollTokenAs(r.Context(), s.o.DB, auth.DefaultTokenTTL, false, role, "admin", s.o.Now())
+	if err != nil {
+		s.internal(w, "auth: enroll token", err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusCreated, map[string]any{"token": tok, "role": role, "expires_at": exp})
+}
+
+func (s *Server) passkeyList(ctx context.Context, userID int64, cur []byte) ([]passkeyJSON, error) {
+	ps, err := s.o.DB.Passkeys(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +322,7 @@ func (s *Server) passkeyList(ctx context.Context, cur []byte) ([]passkeyJSON, er
 
 func (s *Server) passkeys(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.session(w, r)
-	items, err := s.passkeyList(r.Context(), sess.CredID)
+	items, err := s.passkeyList(r.Context(), sess.UserID, sess.CredID)
 	if err != nil {
 		s.internal(w, "auth: passkeys", err)
 		return
@@ -297,7 +336,7 @@ func (s *Server) deletePasskey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", "없는 패스키예요.", 0)
 		return
 	}
-	switch err := s.o.DB.DeletePasskey(r.Context(), id); {
+	switch err := s.o.DB.DeletePasskey(r.Context(), s.uid(w, r), id); {
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "not_found", "없는 패스키예요.", 0)
 	case errors.Is(err, store.ErrConflict):
@@ -535,7 +574,7 @@ func (s *Server) favInput(q favReq) (store.FavInput, error) {
 }
 
 func (s *Server) favoritesGet(w http.ResponseWriter, r *http.Request) {
-	fs, v, err := s.o.DB.Favorites(r.Context())
+	fs, v, err := s.o.DB.Favorites(r.Context(), s.uid(w, r))
 	if err != nil {
 		s.internal(w, "favorites", err)
 		return
@@ -553,7 +592,7 @@ func (s *Server) favoritesAdd(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", err.Error(), 0)
 		return
 	}
-	f, created, v, err := s.o.DB.AddFavorite(r.Context(), in, s.o.Now())
+	f, created, v, err := s.o.DB.AddFavorite(r.Context(), s.uid(w, r), in, s.o.Now())
 	if err != nil {
 		s.internal(w, "favorites: add", err)
 		return
@@ -586,7 +625,7 @@ func (s *Server) favoritesMerge(w http.ResponseWriter, r *http.Request) {
 		}
 		ins = append(ins, in)
 	}
-	fs, v, added, existing, err := s.o.DB.MergeFavorites(r.Context(), ins, s.o.Now())
+	fs, v, added, existing, err := s.o.DB.MergeFavorites(r.Context(), s.uid(w, r), ins, s.o.Now())
 	if err != nil {
 		s.internal(w, "favorites: merge", err)
 		return
@@ -608,7 +647,7 @@ func (s *Server) favoritesDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", "없는 즐겨찾기예요.", 0)
 		return
 	}
-	v, err := s.o.DB.DeleteFavorite(r.Context(), id)
+	v, err := s.o.DB.DeleteFavorite(r.Context(), s.uid(w, r), id)
 	if errors.Is(err, store.ErrNotFound) {
 		writeErr(w, http.StatusNotFound, "not_found", "없는 즐겨찾기예요.", 0)
 		return
@@ -638,7 +677,7 @@ func (s *Server) favoritesRename(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "이름은 1~40자예요.", 0)
 		return
 	}
-	f, v, err := s.o.DB.RenameFavorite(r.Context(), id, name)
+	f, v, err := s.o.DB.RenameFavorite(r.Context(), s.uid(w, r), id, name)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "not_found", "없는 즐겨찾기예요.", 0)
@@ -663,7 +702,7 @@ func (s *Server) favoritesOrder(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "version이 필요해요.", 0)
 		return
 	}
-	fs, v, err := s.o.DB.ReorderFavorites(r.Context(), q.IDs, *q.Version)
+	fs, v, err := s.o.DB.ReorderFavorites(r.Context(), s.uid(w, r), q.IDs, *q.Version)
 	if errors.Is(err, store.ErrConflict) {
 		items, ierr := s.favItems(r.Context(), fs)
 		if ierr != nil {
@@ -686,8 +725,8 @@ func (s *Server) favoritesOrder(w http.ResponseWriter, r *http.Request) {
 
 // --- 알림 설정 (§2.6) ---
 
-func (s *Server) alertSettingsBody(ctx context.Context) (map[string]any, error) {
-	fs, _, err := s.o.DB.Favorites(ctx)
+func (s *Server) alertSettingsBody(ctx context.Context, userID int64) (map[string]any, error) {
+	fs, _, err := s.o.DB.Favorites(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -712,7 +751,7 @@ func (s *Server) alertSettingsBody(ctx context.Context) (map[string]any, error) 
 }
 
 func (s *Server) alertSettingsGet(w http.ResponseWriter, r *http.Request) {
-	b, err := s.alertSettingsBody(r.Context())
+	b, err := s.alertSettingsBody(r.Context(), s.uid(w, r))
 	if err != nil {
 		s.internal(w, "alerts: settings", err)
 		return
@@ -735,7 +774,7 @@ func (s *Server) alertSettingsPatch(w http.ResponseWriter, r *http.Request) {
 	for _, f := range q.Favorites {
 		ps = append(ps, store.AlertPatch{ID: f.ID, Soon: f.Soon, Eve: f.Eve})
 	}
-	switch err := s.o.DB.PatchAlerts(r.Context(), ps); {
+	switch err := s.o.DB.PatchAlerts(r.Context(), s.uid(w, r), ps); {
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "not_found", "없는 즐겨찾기가 있어요.", 0)
 		return
@@ -782,7 +821,7 @@ func (s *Server) pushSubscribe(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", msg, 0)
 		return
 	}
-	sub, err := s.o.DB.UpsertPushSub(r.Context(), store.PushSub{Endpoint: q.Endpoint, P256dh: q.Keys.P256dh, Auth: q.Keys.Auth, Label: label}, s.o.Now())
+	sub, err := s.o.DB.UpsertPushSub(r.Context(), store.PushSub{Endpoint: q.Endpoint, P256dh: q.Keys.P256dh, Auth: q.Keys.Auth, Label: label, UserID: s.uid(w, r)}, s.o.Now())
 	if err != nil {
 		s.internal(w, "push: subscribe", err)
 		return
@@ -801,7 +840,7 @@ func (s *Server) pushUnsubscribe(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "endpoint가 필요해요.", 0)
 		return
 	}
-	if err := s.o.DB.DeletePushSub(r.Context(), q.Endpoint); err != nil {
+	if err := s.o.DB.DeleteUserPushSub(r.Context(), s.uid(w, r), q.Endpoint); err != nil {
 		s.internal(w, "push: unsubscribe", err)
 		return
 	}
@@ -821,8 +860,8 @@ func (s *Server) pushTest(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	rep, err := s.o.Push.SendAll(ctx, push.Message{Title: "my-weather", Body: "테스트 알림이에요.", URL: "/", Tag: "test",
-		TTL: 5 * time.Minute, Urgency: "normal"}, q.Endpoint)
+	rep, err := s.o.Push.SendUser(ctx, push.Message{Title: "my-weather", Body: "테스트 알림이에요.", URL: "/", Tag: "test",
+		TTL: 5 * time.Minute, Urgency: "normal"}, s.uid(w, r), q.Endpoint)
 	if err != nil {
 		s.internal(w, "push: test", err)
 		return
@@ -854,7 +893,7 @@ func (s *Server) settingsInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{"data_source": "기상청 단기예보 조회서비스 (공공데이터포털)", "last_collected": last, "admin": nil}
 	if sess, ok := s.session(w, r); ok {
-		pks, err := s.passkeyList(ctx, sess.CredID)
+		pks, err := s.passkeyList(ctx, sess.UserID, sess.CredID)
 		if err != nil {
 			s.internal(w, "settings: passkeys", err)
 			return
@@ -864,23 +903,27 @@ func (s *Server) settingsInfo(w http.ResponseWriter, r *http.Request) {
 			s.internal(w, "settings: push", err)
 			return
 		}
-		adm := map[string]any{"passkeys": pks, "push_devices": n}
-		if s.o.Collector != nil {
-			adm["collect_grids"] = len(s.o.Collector.Grids())
-		}
-		if s.o.Budget != nil {
-			snap := s.o.Budget.Snapshot()
-			total := 0
-			for _, c := range snap.ByOp {
-				total += c
+		account := map[string]any{"role": sess.Role, "name": sess.Name, "passkeys": pks, "push_devices": n}
+		out["account"] = account
+		if sess.Role == store.RoleAdmin {
+			adm := map[string]any{"passkeys": pks, "push_devices": n, "role": sess.Role}
+			if s.o.Collector != nil {
+				adm["collect_grids"] = len(s.o.Collector.Grids())
 			}
-			d := strconv.FormatInt(snap.Day, 10)
-			if len(d) == 8 {
-				d = d[:4] + "-" + d[4:6] + "-" + d[6:]
+			if s.o.Budget != nil {
+				snap := s.o.Budget.Snapshot()
+				total := 0
+				for _, c := range snap.ByOp {
+					total += c
+				}
+				d := strconv.FormatInt(snap.Day, 10)
+				if len(d) == 8 {
+					d = d[:4] + "-" + d[4:6] + "-" + d[6:]
+				}
+				adm["calls_today"] = map[string]any{"date": d, "total": total, "by_op": snap.ByOp}
 			}
-			adm["calls_today"] = map[string]any{"date": d, "total": total, "by_op": snap.ByOp}
+			out["admin"] = adm
 		}
-		out["admin"] = adm
 		w.Header().Set("Cache-Control", "private, no-store")
 	} else {
 		w.Header().Set("Cache-Control", "private, max-age=60")
@@ -893,6 +936,6 @@ func (s *Server) isAdmin(w http.ResponseWriter, r *http.Request) bool {
 	if info(r).key == ratelimit.KeyLocal {
 		return true
 	}
-	_, ok := s.session(w, r)
-	return ok
+	sess, ok := s.session(w, r)
+	return ok && sess.Role == store.RoleAdmin
 }

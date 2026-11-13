@@ -144,28 +144,29 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/register/verify", s.limited(s.limReg, s.registerVerify))
 	mux.HandleFunc("POST /api/auth/login/options", s.limited(s.limLogin, s.loginOptions))
 	mux.HandleFunc("POST /api/auth/login/verify", s.limited(s.limLogin, s.loginVerify))
-	mux.HandleFunc("POST /api/auth/logout", s.limited(s.limOther, s.admin(s.logout)))
+	mux.HandleFunc("POST /api/auth/logout", s.limited(s.limOther, s.signedIn(s.logout)))
 	mux.HandleFunc("GET /api/auth/me", s.limited(s.limOther, s.me))
-	mux.HandleFunc("GET /api/auth/passkeys", s.limited(s.limOther, s.admin(s.passkeys)))
-	mux.HandleFunc("DELETE /api/auth/passkeys/{id}", s.limited(s.limOther, s.admin(s.deletePasskey)))
+	mux.HandleFunc("POST /api/auth/enroll-tokens", s.limited(s.limOther, s.admin(s.issueEnrollToken)))
+	mux.HandleFunc("GET /api/auth/passkeys", s.limited(s.limOther, s.signedIn(s.passkeys)))
+	mux.HandleFunc("DELETE /api/auth/passkeys/{id}", s.limited(s.limOther, s.signedIn(s.deletePasskey)))
 
-	// 즐겨찾기 (§2.5)
-	mux.HandleFunc("GET /api/favorites", s.limited(s.limOther, s.admin(s.favoritesGet)))
-	mux.HandleFunc("POST /api/favorites", s.limited(s.limOther, s.admin(s.favoritesAdd)))
-	mux.HandleFunc("POST /api/favorites/merge", s.limited(s.limOther, s.admin(s.favoritesMerge)))
-	mux.HandleFunc("PUT /api/favorites/order", s.limited(s.limOther, s.admin(s.favoritesOrder)))
-	mux.HandleFunc("DELETE /api/favorites/{id}", s.limited(s.limOther, s.admin(s.favoritesDelete)))
-	mux.HandleFunc("PATCH /api/favorites/{id}", s.limited(s.limOther, s.admin(s.favoritesRename)))
+	// 즐겨찾기: 로그인한 사용자 자신의 목록
+	mux.HandleFunc("GET /api/favorites", s.limited(s.limOther, s.signedIn(s.favoritesGet)))
+	mux.HandleFunc("POST /api/favorites", s.limited(s.limOther, s.signedIn(s.favoritesAdd)))
+	mux.HandleFunc("POST /api/favorites/merge", s.limited(s.limOther, s.signedIn(s.favoritesMerge)))
+	mux.HandleFunc("PUT /api/favorites/order", s.limited(s.limOther, s.signedIn(s.favoritesOrder)))
+	mux.HandleFunc("DELETE /api/favorites/{id}", s.limited(s.limOther, s.signedIn(s.favoritesDelete)))
+	mux.HandleFunc("PATCH /api/favorites/{id}", s.limited(s.limOther, s.signedIn(s.favoritesRename)))
 
-	// 알림 설정 (§2.6)
-	mux.HandleFunc("GET /api/alerts/settings", s.limited(s.limOther, s.admin(s.alertSettingsGet)))
-	mux.HandleFunc("PATCH /api/alerts/settings", s.limited(s.limOther, s.admin(s.alertSettingsPatch)))
+	// 알림 설정
+	mux.HandleFunc("GET /api/alerts/settings", s.limited(s.limOther, s.signedIn(s.alertSettingsGet)))
+	mux.HandleFunc("PATCH /api/alerts/settings", s.limited(s.limOther, s.signedIn(s.alertSettingsPatch)))
 
-	// 푸시 (§2.7)
+	// 푸시
 	mux.HandleFunc("GET /api/push/vapid-public-key", s.limited(s.limOther, s.vapidKey))
-	mux.HandleFunc("POST /api/push/subscriptions", s.limited(s.limOther, s.admin(s.pushSubscribe)))
-	mux.HandleFunc("DELETE /api/push/subscriptions", s.limited(s.limOther, s.admin(s.pushUnsubscribe)))
-	mux.HandleFunc("POST /api/push/test", s.limited(s.limOther, s.admin(s.pushTest)))
+	mux.HandleFunc("POST /api/push/subscriptions", s.limited(s.limOther, s.signedIn(s.pushSubscribe)))
+	mux.HandleFunc("DELETE /api/push/subscriptions", s.limited(s.limOther, s.signedIn(s.pushUnsubscribe)))
+	mux.HandleFunc("POST /api/push/test", s.limited(s.limOther, s.signedIn(s.pushTest)))
 
 	// 설정 화면
 	mux.HandleFunc("GET /api/settings/info", s.limited(s.limOther, s.settingsInfo))
@@ -496,7 +497,8 @@ func (s *Server) airNow(ctx context.Context, p timeline.Place) *air.Now {
 
 // favPlace는 ?fav=id(관리자)의 장소다. 이름은 즐겨찾기 이름.
 func (s *Server) favPlace(w http.ResponseWriter, r *http.Request) (timeline.Place, bool) {
-	if _, ok := s.session(w, r); !ok {
+	sess, ok := s.session(w, r)
+	if !ok {
 		if s.o.Auth == nil {
 			notConfigured(w, "로그인")
 		} else {
@@ -507,7 +509,7 @@ func (s *Server) favPlace(w http.ResponseWriter, r *http.Request) (timeline.Plac
 	id, err := strconv.ParseInt(r.URL.Query().Get("fav"), 10, 64)
 	var f store.Favorite
 	if err == nil {
-		f, err = s.o.DB.Favorite(r.Context(), id)
+		f, err = s.o.DB.Favorite(r.Context(), sess.UserID, id)
 	}
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) || id <= 0 {

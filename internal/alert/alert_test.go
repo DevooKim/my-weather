@@ -18,7 +18,7 @@ type fakePush struct {
 	msgs []push.Message
 }
 
-func (f *fakePush) SendAll(ctx context.Context, m push.Message, endpoint string) (push.Report, error) {
+func (f *fakePush) SendUser(ctx context.Context, m push.Message, userID int64, endpoint string) (push.Report, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.msgs = append(f.msgs, m)
@@ -57,12 +57,16 @@ func newEnv(t *testing.T, now string) *tenv {
 	}
 	te := &tenv{t: t, db: db, p: &fakePush{}, now: at(now)}
 	te.e = New(Options{DB: db, Push: te.p, Now: func() time.Time { return te.now }})
-	f, _, _, err := db.AddFavorite(ctx, store.FavInput{Name: "서교동", Region: "1144066000", NX: nx, NY: ny}, te.now)
+	u, err := db.CreateUser(ctx, store.RoleAdmin, te.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, _, _, err := db.AddFavorite(ctx, u.ID, store.FavInput{Name: "서교동", Region: "1144066000", NX: nx, NY: ny}, te.now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tr := true
-	if err := db.PatchAlerts(ctx, []store.AlertPatch{{ID: f.ID, Soon: &tr, Eve: &tr}}); err != nil {
+	if err := db.PatchAlerts(ctx, u.ID, []store.AlertPatch{{ID: f.ID, Soon: &tr, Eve: &tr}}); err != nil {
 		t.Fatal(err)
 	}
 	te.fav = f
@@ -209,7 +213,7 @@ func TestSoonGates(t *testing.T) {
 	// 알림이 꺼진 즐겨찾기는 판정하지 않음
 	te4 := newEnv(t, "202611101445")
 	f := false
-	te4.db.PatchAlerts(ctx, []store.AlertPatch{{ID: te4.fav.ID, Soon: &f}})
+	te4.db.PatchAlerts(ctx, te4.fav.UserID, []store.AlertPatch{{ID: te4.fav.ID, Soon: &f}})
 	te4.vilage("202611101400", "202611101500", 12, 60, nil)
 	te4.ultra("202611101430", map[string]string{"202611101600": "1"})
 	te4.e.CheckSoon(ctx, nx, ny, 202611101430)

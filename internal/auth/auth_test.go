@@ -199,7 +199,7 @@ func TestTokenFormat(t *testing.T) {
 func TestRegisterLoginFlow(t *testing.T) {
 	ctx := context.Background()
 	a, db, now := newTest(t)
-	tok, exp, err := IssueEnrollToken(ctx, db, DefaultTokenTTL, false, *now)
+	tok, exp, err := IssueEnrollToken(ctx, db, DefaultTokenTTL, false, store.RoleAdmin, *now)
 	if err != nil || !exp.Equal(now.Add(10*time.Minute)) {
 		t.Fatal(tok, exp, err)
 	}
@@ -214,7 +214,7 @@ func TestRegisterLoginFlow(t *testing.T) {
 	if res.Cookie == "" || res.Passkey.Label != "iPhone 15" {
 		t.Fatalf("res %+v", res)
 	}
-	ps, _ := db.Passkeys(ctx)
+	ps, _ := db.Passkeys(ctx, 0)
 	if len(ps) != 1 || !ps[0].BackupEligible || ps[0].Transports != "internal,hybrid" {
 		t.Fatalf("passkeys %+v", ps)
 	}
@@ -251,7 +251,7 @@ func TestRegisterLoginFlow(t *testing.T) {
 	if _, err := a.FinishLogin(ctx, resp, "ua"); !errors.Is(err, ErrChallenge) {
 		t.Fatalf("replay: %v", err)
 	}
-	ps, _ = db.Passkeys(ctx)
+	ps, _ = db.Passkeys(ctx, 0)
 	if ps[0].LastUsedAt == 0 {
 		t.Fatal("last_used_at not set")
 	}
@@ -272,7 +272,7 @@ func TestRegisterLoginFlow(t *testing.T) {
 	k.origin = testOrigin
 
 	// 마지막 패스키는 못 지움
-	if err := db.DeletePasskey(ctx, k.credID); !errors.Is(err, store.ErrConflict) {
+	if err := db.DeletePasskey(ctx, ps[0].UserID, k.credID); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("delete last: %v", err)
 	}
 }
@@ -280,19 +280,19 @@ func TestRegisterLoginFlow(t *testing.T) {
 func TestRevokeExisting(t *testing.T) {
 	ctx := context.Background()
 	a, db, now := newTest(t)
-	tok, _, _ := IssueEnrollToken(ctx, db, time.Minute, false, *now)
+	tok, _, _ := IssueEnrollToken(ctx, db, time.Minute, false, store.RoleAdmin, *now)
 	k1 := newSoftKey(t)
 	r1, err := register(t, a, k1, tok, "old")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok2, _, _ := IssueEnrollToken(ctx, db, time.Minute, true, *now)
+	tok2, _, _ := IssueEnrollToken(ctx, db, time.Minute, true, store.RoleAdmin, *now)
 	k2 := newSoftKey(t)
 	r2, err := register(t, a, k2, tok2, "new")
 	if err != nil || !r2.Revoked {
 		t.Fatalf("revoke: %+v %v", r2, err)
 	}
-	ps, _ := db.Passkeys(ctx)
+	ps, _ := db.Passkeys(ctx, 0)
 	if len(ps) != 1 || ps[0].Label != "new" {
 		t.Fatalf("passkeys %+v", ps)
 	}
@@ -306,7 +306,7 @@ func TestRevokeExisting(t *testing.T) {
 func TestTokenExpiryAndChallengeTTL(t *testing.T) {
 	ctx := context.Background()
 	a, db, now := newTest(t)
-	tok, _, _ := IssueEnrollToken(ctx, db, 10*time.Minute, false, *now)
+	tok, _, _ := IssueEnrollToken(ctx, db, 10*time.Minute, false, store.RoleMember, *now)
 	cc, err := a.BeginRegistration(ctx, tok, "x")
 	if err != nil {
 		t.Fatal(err)
@@ -321,7 +321,7 @@ func TestTokenExpiryAndChallengeTTL(t *testing.T) {
 	if _, err := a.BeginRegistration(ctx, tok, "x"); !errors.Is(err, ErrBadToken) {
 		t.Fatalf("expired token: %v", err)
 	}
-	if _, _, err := IssueEnrollToken(ctx, db, 25*time.Hour, false, *now); err == nil {
+	if _, _, err := IssueEnrollToken(ctx, db, 25*time.Hour, false, store.RoleAdmin, *now); err == nil {
 		t.Fatal("ttl > 24h accepted")
 	}
 }
@@ -329,7 +329,7 @@ func TestTokenExpiryAndChallengeTTL(t *testing.T) {
 func TestSessionSlidingAndCookie(t *testing.T) {
 	ctx := context.Background()
 	a, db, now := newTest(t)
-	tok, _, _ := IssueEnrollToken(ctx, db, time.Minute, false, *now)
+	tok, _, _ := IssueEnrollToken(ctx, db, time.Minute, false, store.RoleAdmin, *now)
 	res, err := register(t, a, newSoftKey(t), tok, "x")
 	if err != nil {
 		t.Fatal(err)

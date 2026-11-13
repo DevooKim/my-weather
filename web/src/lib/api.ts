@@ -81,7 +81,9 @@ export const api = {
 		),
 
 	// 인증 §2.8
-	me: () => get<{ admin: boolean; passkeys?: number }>('/api/auth/me'),
+	me: () => get<{ admin: boolean; role?: 'admin' | 'member'; name?: string; passkeys?: number }>('/api/auth/me'),
+	issueEnroll: (role: 'admin' | 'member') =>
+		call<{ token: string; role: string; expires_at: string }>('POST', '/api/auth/enroll-tokens', { role }),
 	loginOptions: () => call<{ publicKey: any }>('POST', '/api/auth/login/options', {}),
 	loginVerify: (credential: unknown) =>
 		call<{ ok: boolean; expires_at?: string }>('POST', '/api/auth/login/verify', { credential }),

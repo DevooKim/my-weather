@@ -12,10 +12,13 @@
 	let alerts = $state<AlertSettings | null>(null);
 	let alertsErr = $state('');
 	let testing = $state(false);
+	let enrollRole = $state<'admin' | 'member'>('member');
+	let issued = $state<{ token: string; role: string; expires_at: string } | null>(null);
+	let issuing = $state(false);
 
 	async function load() {
 		api.settingsInfo().then((r) => (info = r)).catch(() => (info = null));
-		if (app.admin) {
+		if (app.signedIn) {
 			try {
 				alerts = await api.alertSettings();
 				alertsErr = '';
@@ -74,6 +77,18 @@
 		if (alerts) alerts = { ...alerts, favorites: alerts.favorites.map((f) => (f.id === id ? { ...f, name } : f)) };
 	}
 
+	async function issue() {
+		issuing = true;
+		try {
+			issued = await api.issueEnroll(enrollRole);
+			app.showToast('등록 코드를 만들었어요. 10분 안에 한 번만 쓸 수 있어요.');
+		} catch (e) {
+			app.showToast(e instanceof Error ? e.message : '코드를 만들지 못했어요.');
+		} finally {
+			issuing = false;
+		}
+	}
+
 	async function logout() {
 		// 푸시 구독은 남겨 둔다: 서버 알림은 로그아웃과 상관없이 계속된다(§2)
 		await app.logout();
@@ -84,7 +99,7 @@
 	let infoTaps = 0;
 	let infoTimer: ReturnType<typeof setTimeout> | null = null;
 	function infoTap() {
-		if (app.admin) return;
+		if (app.signedIn) return;
 		infoTaps++;
 		if (infoTimer) clearTimeout(infoTimer);
 		infoTimer = setTimeout(() => (infoTaps = 0), 700);
@@ -121,7 +136,7 @@
 		}
 		return parts.join(' · ');
 	});
-	const passkeys = $derived<any[]>(info?.admin?.passkeys ?? []);
+	const passkeys = $derived<any[]>(info?.account?.passkeys ?? info?.admin?.passkeys ?? []);
 </script>
 
 <div class="settings" role="dialog" aria-modal="true" aria-label="설정">
@@ -130,7 +145,7 @@
 		<h1 tabindex="-1">설정</h1>
 	</header>
 	<div class="content">
-		{#if app.admin}
+		{#if app.signedIn}
 			<section>
 				<h2>비 알림</h2>
 				<div class="card">
@@ -173,24 +188,47 @@
 				<button type="button" class="pill" onclick={test} disabled={testing}>{testing ? '보내는 중…' : '테스트 알림 보내기'}</button>
 			</section>
 			<section>
-				<h2>관리자</h2>
+				<h2>{app.admin ? '관리자' : '계정'}</h2>
 				<div class="card">
+					<div class="item">
+						<span class="grow">권한</span>
+						<span class="muted">{app.admin ? '관리자' : '사용자'}</span>
+					</div>
 					<div class="item">
 						<span class="grow">패스키</span>
 						<span class="muted"
 							>{#if passkeys.length}{#each passkeys as k, i (k.id)}{i ? ', ' : ''}{k.current ? '이 ' : ''}{k.label} · {md(k.created_at)} 등록{/each}{:else}–{/if}</span
 						>
 					</div>
-					<div class="item">
-						<span class="grow">수집 중인 장소</span>
-						<span class="muted"
-							>{info?.admin
-								? `${info.admin.collect_grids ?? '–'}곳 · 오늘 호출 ${info.admin.calls_today?.total ?? '–'}회`
-								: '–'}</span
-						>
-					</div>
+					{#if app.admin}
+						<div class="item">
+							<span class="grow">수집 중인 장소</span>
+							<span class="muted"
+								>{info?.admin
+									? `${info.admin.collect_grids ?? '–'}곳 · 오늘 호출 ${info.admin.calls_today?.total ?? '–'}회`
+									: '–'}</span
+							>
+						</div>
+					{/if}
 					<button type="button" class="item danger" onclick={logout}>로그아웃</button>
 				</div>
+				{#if app.admin}
+					<p class="hint">등록 코드는 10분 동안 한 번만 쓸 수 있어요. 안드로이드는 Chrome에서 지문·PIN으로 등록합니다.</p>
+					<div class="card pad enroll">
+						<label>
+							권한
+							<select bind:value={enrollRole}>
+								<option value="member">사용자</option>
+								<option value="admin">관리자</option>
+							</select>
+						</label>
+						<button type="button" class="pill" onclick={issue} disabled={issuing}>{issuing ? '만드는 중…' : '등록 코드 만들기'}</button>
+						{#if issued}
+							<p class="code">{issued.token}</p>
+							<p class="hint">{issued.role === 'admin' ? '관리자' : '사용자'} 코드 · {issued.expires_at.slice(11, 16)}까지</p>
+						{/if}
+					</div>
+				{/if}
 			</section>
 		{/if}
 		<section>
@@ -368,6 +406,35 @@
 	}
 	.danger {
 		color: var(--danger-text);
+	}
+	.enroll {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+	.enroll label {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		font-size: 13px;
+		color: var(--text-2);
+	}
+	.enroll select {
+		height: 44px;
+		padding: 0 12px;
+		border: 1px solid var(--border-strong);
+		border-radius: 10px;
+		background: var(--surface);
+		color: var(--text);
+		font: inherit;
+		font-size: 16px;
+	}
+	.code {
+		margin: 0;
+		font-size: 18px;
+		font-weight: 700;
+		letter-spacing: 0.4px;
+		word-break: break-all;
 	}
 	.icon-btn {
 		width: 44px;

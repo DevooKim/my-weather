@@ -68,12 +68,16 @@ func newAdminEnv(t *testing.T, withPush bool) *adminEnv {
 	}
 	e.h = New(opt).Handler()
 
-	// 패스키 하나 + 세션
+	// 관리자 패스키 하나 + 세션
 	ae.cookie = "test-session-cookie-value"
 	h := sha256.Sum256([]byte(ae.cookie))
 	ctx := context.Background()
-	e.db.W.Exec(`INSERT INTO passkey (cred_id, public_key, sign_count, label, created_at) VALUES (x'0102', x'00', 0, 'iPhone', ?)`, e.now.Unix())
-	if err := e.db.CreateSession(ctx, store.NewSession{TokenHash: h[:], CredID: []byte{1, 2}, ExpiresAt: e.now.Add(24 * time.Hour)}, e.now); err != nil {
+	u, err := e.db.CreateUser(ctx, store.RoleAdmin, e.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.db.W.Exec(`INSERT INTO passkey (cred_id, public_key, sign_count, label, user_id, created_at) VALUES (x'0102', x'00', 0, 'iPhone', ?, ?)`, u.ID, e.now.Unix())
+	if err := e.db.CreateSession(ctx, store.NewSession{TokenHash: h[:], CredID: []byte{1, 2}, UserID: u.ID, ExpiresAt: e.now.Add(24 * time.Hour)}, e.now); err != nil {
 		t.Fatal(err)
 	}
 	return ae
@@ -170,7 +174,7 @@ func TestRegisterOptionsToken(t *testing.T) {
 	if w := a.do("POST", "/api/auth/register/options", `{"token":"MW-AAAA-BBBB-CCCC","label":"iPhone"}`, false); w.Code != 403 {
 		t.Fatalf("bad token: %d %s", w.Code, w.Body)
 	}
-	tok, _, err := auth.IssueEnrollToken(context.Background(), a.db, 10*time.Minute, false, a.now)
+	tok, _, err := auth.IssueEnrollToken(context.Background(), a.db, 10*time.Minute, false, store.RoleMember, a.now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +193,7 @@ func TestRegisterOptionsToken(t *testing.T) {
 	}
 	json.Unmarshal(w.Body.Bytes(), &o)
 	if o.PublicKey.RP.ID != "weather.example.com" || o.PublicKey.AuthenticatorSelection["residentKey"] != "required" ||
-		o.PublicKey.AuthenticatorSelection["userVerification"] != "required" || len(o.PublicKey.ExcludeCredentials) != 1 {
+		o.PublicKey.AuthenticatorSelection["userVerification"] != "required" || len(o.PublicKey.ExcludeCredentials) != 0 {
 		t.Fatalf("options %s", w.Body)
 	}
 	if w := a.do("POST", "/api/auth/login/options", "", false); w.Code != 200 || !strings.Contains(w.Body.String(), `"challenge"`) {
