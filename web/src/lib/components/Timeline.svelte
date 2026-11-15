@@ -188,15 +188,35 @@
 		if (x < scroller.scrollLeft + cw || x > scroller.scrollLeft + scroller.clientWidth - cw) scrollToIndex(i, 0.5);
 	}
 
-	// 처음 그릴 때와 장소가 바뀔 때 '지금'(또는 선택 칸)으로 넘긴다
+	// 처음 그릴 때와 장소가 바뀔 때 '지금'(또는 선택 칸)으로 넘긴다.
+	// 새 자료가 오면(저장해 둔 타임라인 → 새로 받은 타임라인, 5분마다 갱신, 앱으로 돌아옴) '지금' 칸이
+	// 옮겨 가므로 다시 맞춘다. 사용자가 직접 넘겨 본 뒤에는 그대로 둔다(1분 넘게 다른 앱에 있다 오면 다시 따라감).
 	let shownFor = '';
+	let shownNow = '';
+	let userMoved = false;
 	$effect(() => {
 		const key = `${tl.place.nx},${tl.place.ny},${tl.place.region ?? ''}`;
-		if (scroller && n && shownFor !== key) {
+		if (!scroller || !n) return;
+		if (shownFor !== key) {
 			shownFor = key;
+			shownNow = tl.now;
+			userMoved = false;
 			scrollToIndex(selected >= 0 ? selected : nowIdx, 0.3, false);
+		} else if (shownNow !== tl.now) {
+			shownNow = tl.now;
+			if (!userMoved && selected === nowIdx) scrollToIndex(nowIdx, 0.3, false);
 		}
 	});
+	$effect(() => {
+		let hiddenAt = 0;
+		const onVis = () => {
+			if (document.visibilityState === 'hidden') hiddenAt = Date.now();
+			else if (hiddenAt && Date.now() - hiddenAt > 60_000) userMoved = false;
+		};
+		document.addEventListener('visibilitychange', onVis);
+		return () => document.removeEventListener('visibilitychange', onVis);
+	});
+	const moved = () => (userMoved = true);
 
 	function key(e: KeyboardEvent) {
 		let i = selected;
@@ -214,7 +234,7 @@
 		s.wsd != null ? String(Math.round(s.wsd)) : s.wsd_code ? ['', '약', '중', '강'][s.wsd_code] ?? '' : '';
 </script>
 
-<div class="scroller" bind:this={scroller}>
+<div class="scroller" role="presentation" bind:this={scroller} onpointerdown={moved} onwheel={moved} ontouchstart={moved}>
 	<svg
 		width={W}
 		height={H}
