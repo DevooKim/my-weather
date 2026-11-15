@@ -323,6 +323,10 @@
 	.card.current {
 		border-color: transparent;
 	}
+	/* 카드 배경 모션(비·눈·구름)을 살짝 흐리게. 달은 캔버스 밖 SVG라 선명하다 */
+	.card.current :global(canvas) {
+		filter: blur(1px);
+	}
 	.card.current .front {
 		background: #2b3440;
 		color: #fff;

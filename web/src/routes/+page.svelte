@@ -204,7 +204,8 @@
 {#if desktop}
 	<!-- PC: 날씨 모션이 창 전체 배경. 위쪽 넓은 하늘에 지금 날씨, 그 아래 카드가 하늘 위로 올라온다 -->
 	<div class="desk">
-		<div class="sky" aria-hidden="true"><WeatherCanvas {scene} maxDpr={1} /></div>
+		<!-- 모션은 위쪽 하늘 영역에만(비·눈이 화면 전체에 내리면 어지럽다). 아래는 하늘 아랫색 단색 -->
+		<div class="sky" aria-hidden="true"><WeatherCanvas {scene} /></div>
 		<div class="deskbar">
 			<span class="brand">my-weather</span>
 			<button type="button" class="menu" aria-label="메뉴" onclick={menu}><Icon name="menu" size={22} /></button>
@@ -412,15 +413,30 @@
 
 	/* 4B 데스크톱: 모션 배경 + 하늘 머리 + 2단 카드 */
 	.desk {
+		/* 하늘 영역 높이: 머리 줄 + 큰 기온 영역 + 카드 윗부분에 살짝 걸치는 만큼 */
+		--hero-h: clamp(200px, 30vh, 340px);
+		--sky-h: calc(68px + var(--hero-h) + 60px);
 		position: relative;
 		min-height: 100vh;
 		padding: 0 24px 32px;
 		isolation: isolate;
+		background: var(--sky-bottom, #36414f);
+		transition: background 0.6s;
 	}
 	.sky {
-		position: fixed;
-		inset: 0;
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: var(--sky-h);
 		z-index: -1;
+		/* 아래 끝은 단색 배경으로 부드럽게 녹아든다 */
+		-webkit-mask-image: linear-gradient(to bottom, #000 75%, transparent);
+		mask-image: linear-gradient(to bottom, #000 75%, transparent);
+	}
+	/* 비·눈·구름을 살짝 흐리게(덜 어지럽게). 달은 캔버스 밖 SVG라 선명하게 남는다 */
+	.sky :global(canvas) {
+		filter: blur(1.5px);
 	}
 	.deskbar,
 	.dhero,
@@ -456,7 +472,7 @@
 	}
 	/* 하늘 머리: 모션 위 글자라 원래 글꼴. 창 높이에 맞춰 하늘이 넉넉히 보이게 */
 	.dhero {
-		min-height: clamp(260px, 42vh, 460px);
+		min-height: var(--hero-h);
 		display: flex;
 		flex-direction: column;
 		justify-content: flex-end;
