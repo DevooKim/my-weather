@@ -387,8 +387,6 @@
 			<circle cx={cx(selected)} cy={yOf(st)} r="7" fill={tempColor(st)} opacity="0.22" />
 			<circle cx={cx(selected)} cy={yOf(st)} r="4" fill="var(--page)" stroke={tempColor(st)} stroke-width="2.5" />
 		{/if}
-		<text x="6" y={yChart + 12} class="small" fill="var(--text-4)">{slots[0]?.estimated ? '추정' : '실측'}</text>
-		<text x={nowX + 6} y={yChart + 12} class="small" fill="var(--accent-text)">예보</text>
 
 		<!-- 누르는 영역 -->
 		{#each cols as c (c.i)}

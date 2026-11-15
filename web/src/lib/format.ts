@@ -1,5 +1,5 @@
 // 표시용 문자열. 시각은 기기 시간대와 상관없이 KST로 다룬다.
-import type { Amount, Day, Pty, Sky, Slot, Source } from './types';
+import type { Amount, Day, Pty, Sky, Slot } from './types';
 
 const KST = 9 * 3600 * 1000;
 const WEEK = ['일', '월', '화', '수', '목', '금', '토'];
@@ -136,18 +136,6 @@ export function nowPrecipText(s: Slot) {
 	if (!s.wet || !s.pty || s.pty === 'none') return '';
 	const a = amountText(s.pcp);
 	return a ? `${PTY_TEXT[s.pty]} ${a}` : PTY_TEXT[s.pty];
-}
-
-/** 상세 패널 출처 줄. 예: "예보 (20시 발표)", "실황 (22시 관측)", "단기예보 17시 발표 (20시 발표 지연)" */
-export function sourceText(s: Slot, sources: Record<string, Source>) {
-	const src = s.src.obs ? sources[s.src.obs] : undefined;
-	if (!src) return s.phase === 'future' ? '예보' : '';
-	if (src.kind === 'ncst') return `실황 (${hourLabel(s.t)} 관측)`;
-	const base = src.base ? `${hourLabel(src.base)} 발표` : '';
-	let t = s.phase === 'future' ? `예보${base ? ` (${src.label} ${base})` : ''}` : `추정 (${src.label} ${base})`;
-	if (src.delayed) t = `${src.label} ${base} (${hourLabel(src.delayed.expected_base)} 발표 지연)`;
-	if (s.phase !== 'future' && src.kind !== 'vilage') t = `${src.label}${base ? ` ${base}` : ''}`;
-	return t;
 }
 
 export function dailyWord(d: Day) {
