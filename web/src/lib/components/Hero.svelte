@@ -1,7 +1,8 @@
 <script lang="ts">
 	// 1A(큰 현재 날씨) → 1C(접힌 크기) → 한 줄 머리. 높이 h는 부모가 스크롤로 정한다.
 	import { app } from '$lib/app.svelte';
-	import { airText, deg, nowPrecipText, shortFull, summaryLines, weatherWord } from '$lib/format';
+	import { deg, shortFull, summaryLines } from '$lib/format';
+	import { heroText } from '$lib/hero';
 	import type { Scene } from '$lib/scene';
 	import Icon from './Icon.svelte';
 	import WeatherCanvas from './WeatherCanvas.svelte';
@@ -22,25 +23,11 @@
 	} = $props();
 
 	const tl = $derived(app.timeline);
-	const nowSlot = $derived(tl?.slots.find((s) => s.phase === 'now') ?? null);
-	const tmp = $derived(tl?.summary.now?.tmp ?? nowSlot?.tmp ?? null);
-	const word = $derived.by(() => {
-		if (!nowSlot) return '';
-		const sky = nowSlot.sky ?? tl?.slots.find((s) => s.phase === 'future' && s.sky)?.sky ?? null;
-		return weatherWord({ ...nowSlot, sky });
-	});
-	const precip = $derived(nowSlot ? nowPrecipText(nowSlot) : '');
+	const ht = $derived(heroText(tl));
+	const tmp = $derived(ht.tmp);
+	const desc1A = $derived(ht.desc);
+	const desc1C = $derived(ht.short);
 	const lines = $derived(summaryLines(tl?.summary.text));
-	const feels = $derived(
-		nowSlot?.feels != null && tmp != null && Math.round(nowSlot.feels) !== Math.round(tmp) ? `체감 ${deg(nowSlot.feels)}` : ''
-	);
-	// 미세먼지는 나쁨 이상일 때만 머리에 붙인다(좋음·보통은 상세 패널에서)
-	const airBad = $derived((tl?.air?.grade ?? 0) >= 3 ? airText(tl?.air) : '');
-	const fogWord = $derived(tl?.fog?.fog ? '안개' : '');
-	const desc1A = $derived(
-		[precip ? precip.replace(/^(\S+) /, '$1 · 시간당 ') : word, fogWord, feels, airBad].filter(Boolean).join(' · ')
-	);
-	const desc1C = $derived(precip || word);
 
 	const placeLabel = $derived.by(() => {
 		const p = app.place;
@@ -127,6 +114,7 @@
 		overflow: hidden;
 		color: #fff;
 		background: #2b3440;
+		font-family: var(--font-motion);
 	}
 	.inner {
 		position: relative;

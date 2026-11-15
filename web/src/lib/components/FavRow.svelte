@@ -326,6 +326,7 @@
 	.card.current .front {
 		background: #2b3440;
 		color: #fff;
+		font-family: var(--font-motion);
 		min-height: 110px;
 		align-items: flex-start;
 	}

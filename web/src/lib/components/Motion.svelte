@@ -114,6 +114,7 @@
 		left: 10px;
 		right: 10px;
 		bottom: 10px;
+		font-family: var(--font-motion);
 		font-size: 13px;
 		color: #fff;
 		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);

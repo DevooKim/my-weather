@@ -67,3 +67,26 @@ export function precipRate(s: Slot) {
 	if (!mm) mm = s.pty === 'drizzle' || s.pty === 'flurry' ? 0.3 : 1; // 강수형태는 있는데 양이 없을 때
 	return mm / (s.h || 1);
 }
+
+// 기온 → 색. 차트 선·일별 막대가 같은 눈금을 쓴다(추우면 파랑, 선선하면 청록, 따뜻하면 노랑·주황, 더우면 빨강)
+const TEMP_STOPS: [number, [number, number, number]][] = [
+	[-15, [110, 120, 230]],
+	[-3, [84, 150, 235]],
+	[6, [74, 182, 205]],
+	[14, [236, 184, 74]],
+	[22, [240, 136, 72]],
+	[31, [226, 80, 80]]
+];
+export function tempColor(t: number): string {
+	const s = TEMP_STOPS;
+	if (t <= s[0][0]) return `rgb(${s[0][1].join(',')})`;
+	for (let i = 1; i < s.length; i++) {
+		if (t <= s[i][0]) {
+			const [t0, a] = s[i - 1],
+				[t1, b] = s[i];
+			const k = (t - t0) / (t1 - t0);
+			return `rgb(${a.map((v, j) => Math.round(v + (b[j] - v) * k)).join(',')})`;
+		}
+	}
+	return `rgb(${s[s.length - 1][1].join(',')})`;
+}

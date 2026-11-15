@@ -12,7 +12,9 @@
 	import Motion from '$lib/components/Motion.svelte';
 	import Sheet from '$lib/components/Sheet.svelte';
 	import Timeline from '$lib/components/Timeline.svelte';
-	import { hm, kst, shortFull, summaryLines } from '$lib/format';
+	import WeatherCanvas from '$lib/components/WeatherCanvas.svelte';
+	import { deg, hm, kst, shortFull, summaryLines } from '$lib/format';
+	import { heroText } from '$lib/hero';
 	import { sceneOf } from '$lib/scene';
 	import type { Place } from '$lib/types';
 	import { onMount, tick } from 'svelte';
@@ -51,6 +53,9 @@
 	const scene = $derived(app.demo?.scene ?? sceneOf(app.timeline));
 	$effect(() => {
 		document.querySelector('meta[name="theme-color"]')?.setAttribute('content', scene.top);
+		// 아래 차트·카드가 지금 하늘색을 옅게 이어받는다
+		document.documentElement.style.setProperty('--sky-top', scene.top);
+		document.documentElement.style.setProperty('--sky-bottom', scene.bottom);
 	});
 
 	// 선택 칸: null = 지금
@@ -119,6 +124,7 @@
 	const staleText = $derived(app.staleAt ? hm(new Date(app.staleAt).toISOString()) : '');
 	const pending = $derived(tl && !tl.complete);
 	const lines = $derived(summaryLines(tl?.summary.text));
+	const ht = $derived(heroText(tl));
 	const placeTitle = $derived.by(() => {
 		const p = app.place;
 		if (!p) return '';
@@ -190,22 +196,30 @@
 {/snippet}
 
 {#if desktop}
+	<!-- PC: 날씨 모션이 창 전체 배경. 위쪽 넓은 하늘에 지금 날씨, 그 아래 카드가 하늘 위로 올라온다 -->
 	<div class="desk">
+		<div class="sky" aria-hidden="true"><WeatherCanvas {scene} maxDpr={1} /></div>
 		<div class="deskbar">
 			<span class="brand">my-weather</span>
 			<button type="button" class="menu" aria-label="메뉴" onclick={menu}><Icon name="menu" size={22} /></button>
 		</div>
+		<section class="dhero" aria-label="지금 날씨">
+			{#if app.place}<h1>{placeTitle}</h1>{/if}
+			{#if tl}
+				<div class="dnow">
+					<span class="dtemp">{deg(ht.tmp)}</span>
+					<span class="ddesc">{ht.desc}</span>
+				</div>
+				{#if lines.length}
+					<div class="dsum">{#each lines as l, i (i)}<p>{l}</p>{/each}</div>
+				{/if}
+			{/if}
+		</section>
 		<div class="cols">
 			<aside>
 				<PlaceList variant="aside" onpick={pickPlace} onbell={toggleBell} />
 			</aside>
 			<main>
-				{#if app.place}
-					<div class="mhead">
-						<h1>{placeTitle}</h1>
-						{#if lines.length}<p>{lines.join(' · ')}</p>{/if}
-					</div>
-				{/if}
 				{@render states()}
 				{#if tl}
 					<Timeline
@@ -273,8 +287,14 @@
 		background: var(--page);
 		min-height: 100vh;
 	}
+	/* 머리(모션) 바로 아래: 하늘 아랫색이 옅게 번져 내려와 흰 바탕과 이어진다 */
 	.tl {
 		padding: 14px 0 6px;
+		background: linear-gradient(
+			to bottom,
+			color-mix(in srgb, var(--sky-bottom, var(--page)) 12%, var(--page)),
+			var(--page) 85%
+		);
 	}
 	.foot {
 		margin: 24px 20px 8px;
@@ -382,24 +402,35 @@
 		box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
 	}
 
-	/* 4B 데스크톱 2단 */
+	/* 4B 데스크톱: 모션 배경 + 하늘 머리 + 2단 카드 */
 	.desk {
+		position: relative;
 		min-height: 100vh;
-		background: var(--page-desk);
-		padding: 0 16px 24px;
+		padding: 0 24px 32px;
+		isolation: isolate;
 	}
-	.deskbar {
+	.sky {
+		position: fixed;
+		inset: 0;
+		z-index: -1;
+	}
+	.deskbar,
+	.dhero,
+	.cols {
 		max-width: 1240px;
 		margin: 0 auto;
+	}
+	.deskbar {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: 8px 0;
+		padding: 12px 0;
+		color: #fff;
 	}
 	.brand {
 		font-size: 15px;
 		font-weight: 700;
-		color: var(--text-2);
+		color: rgba(255, 255, 255, 0.85);
 	}
 	.menu {
 		width: 44px;
@@ -409,14 +440,66 @@
 		justify-content: center;
 		background: none;
 		border: 0;
-		color: var(--text);
+		color: #fff;
+		border-radius: 22px;
+	}
+	.menu:hover {
+		background: rgba(255, 255, 255, 0.12);
+	}
+	/* 하늘 머리: 모션 위 글자라 원래 글꼴. 창 높이에 맞춰 하늘이 넉넉히 보이게 */
+	.dhero {
+		min-height: clamp(260px, 42vh, 460px);
+		display: flex;
+		flex-direction: column;
+		justify-content: flex-end;
+		gap: 6px;
+		padding: 0 4px 28px;
+		color: #fff;
+		font-family: var(--font-motion);
+		text-shadow: 0 1px 12px rgba(0, 0, 0, 0.18);
+	}
+	.dhero h1 {
+		margin: 0;
+		font-size: 18px;
+		font-weight: 500;
+		opacity: 0.92;
+	}
+	.dnow {
+		display: flex;
+		align-items: baseline;
+		gap: 16px;
+		flex-wrap: wrap;
+	}
+	.dtemp {
+		font-size: 112px;
+		font-weight: 700;
+		line-height: 1;
+		letter-spacing: -3px;
+	}
+	.ddesc {
+		font-size: 22px;
+		font-weight: 500;
+	}
+	.dsum {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		font-size: 16px;
+		opacity: 0.92;
+	}
+	.dsum p {
+		margin: 0;
 	}
 	.cols {
-		max-width: 1240px;
-		margin: 0 auto;
 		display: flex;
 		gap: 16px;
 		align-items: flex-start;
+	}
+	aside,
+	main {
+		background: var(--surface);
+		border-radius: 20px;
+		box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
 	}
 	aside {
 		flex: 0 0 300px;
@@ -424,29 +507,16 @@
 		top: 16px;
 		max-height: calc(100vh - 32px);
 		overflow-y: auto;
-		padding: 2px;
+		padding: 12px 10px;
 	}
 	main {
 		flex: 1 1 560px;
 		min-width: 0;
-		background: var(--surface);
-		border-radius: 12px;
 		padding: 16px 12px;
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
-	}
-	.mhead {
-		padding: 0 8px;
-	}
-	.mhead h1 {
-		margin: 0;
-		font-size: 18px;
-	}
-	.mhead p {
-		margin: 4px 0 0;
-		font-size: 14px;
-		color: var(--text-2);
+		overflow: hidden;
 	}
 	main :global(.h) {
 		margin-left: 8px;

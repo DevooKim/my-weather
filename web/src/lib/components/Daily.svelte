@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { dailyWord, dayLabel, deg } from '$lib/format';
 	import type { Timeline } from '$lib/types';
-	import { iconColor, iconFor } from '$lib/weather';
+	import { iconColor, iconFor, tempColor } from '$lib/weather';
 	import Icon from './Icon.svelte';
 
 	let { tl, onpick }: { tl: Timeline; onpick: (date: string) => void } = $props();
@@ -35,7 +35,12 @@
 					<span class="min">{deg(d.tmin)}</span>
 					<span class="bar">
 						{#if d.tmin != null && d.tmax != null}
-							<span class="fill" style="left:{pct(d.tmin)}%;width:{Math.max(2, pct(d.tmax) - pct(d.tmin))}%"></span>
+							<span
+								class="fill"
+								style="left:{pct(d.tmin)}%;width:{Math.max(2, pct(d.tmax) - pct(d.tmin))}%;background:linear-gradient(to right, {tempColor(
+									d.tmin
+								)}, {tempColor(d.tmax)})"
+							></span>
 						{/if}
 					</span>
 					<span class="max">{deg(d.tmax)}</span>
@@ -72,8 +77,12 @@
 		cursor: pointer;
 	}
 	.row.today {
-		background: var(--accent-weak);
-		border-radius: 8px;
+		background: var(--tl-sel);
+		border-radius: 14px;
+		border-top-color: transparent;
+	}
+	li:has(.today) + li .row {
+		border-top-color: transparent;
 	}
 	.label {
 		width: 76px;
@@ -98,6 +107,10 @@
 		text-align: right;
 		flex: none;
 	}
+	.min,
+	.max {
+		font-variant-numeric: tabular-nums;
+	}
 	.min {
 		width: 32px;
 		font-size: 14px;
@@ -116,13 +129,12 @@
 		position: relative;
 		height: 6px;
 		border-radius: 3px;
-		background: var(--line);
+		background: color-mix(in srgb, var(--line) 70%, transparent);
 	}
 	.fill {
 		position: absolute;
 		top: 0;
 		bottom: 0;
 		border-radius: 3px;
-		background: var(--temp-bar);
 	}
 </style>

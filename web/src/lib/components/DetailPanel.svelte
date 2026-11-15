@@ -93,11 +93,15 @@
 
 <style>
 	.panel {
-		margin: 6px 16px 0;
-		padding: 12px 14px;
-		border: 1px solid var(--line-2);
-		border-radius: 12px;
-		background: var(--surface);
+		margin: 8px 16px 0;
+		padding: 14px 16px;
+		border: 1px solid color-mix(in srgb, var(--sky-bottom, var(--line)) 14%, var(--line));
+		border-radius: 18px;
+		background: linear-gradient(
+			160deg,
+			color-mix(in srgb, var(--sky-bottom, var(--surface)) 9%, var(--surface)),
+			var(--surface) 70%
+		);
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
@@ -120,8 +124,10 @@
 		flex-wrap: wrap;
 	}
 	.t {
-		font-size: 26px;
+		font-size: 30px;
 		font-weight: 700;
+		letter-spacing: -0.5px;
+		font-variant-numeric: tabular-nums;
 	}
 	.sub {
 		font-size: 14px;
@@ -129,8 +135,9 @@
 	.grid {
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 4px 12px;
+		gap: 6px 12px;
 		font-size: 14px;
+		color: var(--text-2);
 	}
 	.note {
 		font-size: 13px;

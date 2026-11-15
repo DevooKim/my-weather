@@ -1,3 +1,11 @@
+/* SUIT(sun.fo/suit, OFL) 가변 글꼴. 오프라인(PWA)에서도 보이게 static에 두고 서비스 워커가 함께 저장한다 */
+@font-face {
+	font-family: 'SUIT Variable';
+	font-weight: 100 900;
+	font-style: normal;
+	font-display: swap;
+	src: url('/fonts/SUIT-Variable.woff2') format('woff2-variations');
+}
 /* 무채색 + 강조 파랑 #2A72E5. 카드·그래프·시트는 시스템 라이트/다크를 따른다. */
 :root {
 	/* 홈 화면 앱(PWA)에서 상태바 아래 여백을 조금 더. iOS가 상태바 밑을 흐리게 덮어서 바로 아래 글자가 흐려 보인다 */
@@ -27,15 +35,18 @@
 	--warn-bg: #fff3e6;
 	--warn-text: #6b3a00;
 	--warn-border: #c27a2c;
-	--tl-past: #f1f2f4;
-	--tl-band: #eaf1fc;
+	--tl-past: #f6f7f9;
+	--tl-band: #f3f7fd;
+	--tl-sel: rgba(42, 114, 229, 0.09);
 	--tl-pastline: #8a929c;
 	--bar-rain: #5b8fd0;
 	--temp-bar: #e08a3c;
 	--icon-sun: #b26b00;
 	--icon-rain: #2f6fb5;
 	--icon-gray: #5b6470;
-	--font: 'Noto Sans KR', 'Apple SD Gothic Neo', 'Pretendard', system-ui, -apple-system, 'Malgun Gothic', sans-serif;
+	--font: 'SUIT Variable', 'Apple SD Gothic Neo', 'Pretendard', system-ui, -apple-system, 'Malgun Gothic', sans-serif;
+	/* 날씨 모션 위 글자(첫 화면 머리, 모션 카드 이름)는 원래 글꼴 그대로 */
+	--font-motion: 'Noto Sans KR', 'Apple SD Gothic Neo', 'Pretendard', system-ui, -apple-system, 'Malgun Gothic', sans-serif;
 }
 @media (prefers-color-scheme: dark) {
 	:root {
@@ -63,8 +74,9 @@
 		--warn-bg: #3a2a14;
 		--warn-text: #ffd7a8;
 		--warn-border: #9a6a33;
-		--tl-past: #20252c;
-		--tl-band: #1a2638;
+		--tl-past: #161a1f;
+		--tl-band: #141c27;
+		--tl-sel: rgba(77, 141, 255, 0.14);
 		--tl-pastline: #7d8692;
 		--bar-rain: #4d7fc0;
 		--temp-bar: #e08a3c;
@@ -89,6 +101,12 @@ body {
 	-webkit-font-smoothing: antialiased;
 	-webkit-tap-highlight-color: transparent;
 	overflow-x: hidden;
+}
+button,
+input,
+textarea,
+select {
+	font-family: inherit;
 }
 button {
 	cursor: pointer;

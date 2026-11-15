@@ -8,9 +8,16 @@
 
 	// height: 고정 높이(px). 스크롤로 접히는 머리처럼 부모 높이가 매 프레임 바뀌는 곳에서는
 	// 캔버스를 가장 큰 높이로 한 번만 만들고 부모가 잘라 보이게 한다(크기 재설정·입자 리셋이 없어 부드럽다).
-	let { scene, height }: { scene: Scene; height?: number } = $props();
+	// maxDpr: 화면 전체에 까는 큰 캔버스(PC 배경)는 1로 낮춰 그리는 양을 줄인다. 부드러운 장면이라 차이가 거의 안 보인다
+	let { scene, height, maxDpr = 2 }: { scene: Scene; height?: number; maxDpr?: number } = $props();
 
 	let canvas: HTMLCanvasElement | undefined = $state();
+
+	// 달(밤·맑음/구름 조금): 반지름 18px에 맞춘 그림 크기. 위치는 캔버스의 해·달 자리와 같다
+	const MOON_R = 18;
+	const moonSize = ((2 * MOON_R) / MOON_DIAMETER) * MOON_VIEWBOX;
+	const showMoon = $derived(scene.light === 'night' && (scene.kind === 'clear' || scene.kind === 'partly'));
+	const moon = $derived(showMoon ? moonSvg(scene.moonPhase) : '');
 
 	type P = { x: number; y: number; z: number; s: number };
 	/** 구름 하나: 미리 그려 둔 그림(sp)을 x로 흘린다. z가 클수록 가깝다(크고 빠름) */
@@ -317,7 +324,7 @@
 		}
 		const resize = () => {
 			const r = cv.getBoundingClientRect();
-			const nd = Math.min(2, window.devicePixelRatio || 1);
+			const nd = Math.min(maxDpr, window.devicePixelRatio || 1);
 			const nw = Math.round(r.width),
 				nh = Math.round(r.height);
 			if (nw === w && nh === h && nd === dpr) return;
@@ -364,27 +371,8 @@
 				ctx!.beginPath();
 				ctx!.arc(x, y + (sc.light === 'day' ? 0 : h * 0.35), r, 0, Math.PI * 2);
 				ctx!.fill();
-			} else {
-				drawMoon(x, y, 18, sc.moonPhase);
 			}
-		}
-
-		// 달: moon.svg(ray 테마) 그림을 위상별로 한 번 만들어 이미지로 그린다.
-		let moonImg: HTMLImageElement | null = null;
-		let moonImgPhase = -1;
-		function drawMoon(x: number, y: number, r: number, ph: number) {
-			if (ph !== moonImgPhase) {
-				moonImgPhase = ph;
-				const img = new Image();
-				img.onload = () => {
-					if (moonImg === img && !raf) draw(0);
-				};
-				img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(moonSvg(ph));
-				moonImg = img;
-			}
-			if (!moonImg?.complete || !moonImg.naturalWidth) return;
-			const s = ((2 * r) / MOON_DIAMETER) * MOON_VIEWBOX;
-			ctx!.drawImage(moonImg, x - s / 2, y - s / 2, s, s);
+			// 밤에는 달: 캔버스가 아니라 아래 .moon(SVG)로 그린다. 캔버스 해상도를 낮춰도(PC 배경) 달은 선명하게
 		}
 
 		function draw(dt: number) {
@@ -508,6 +496,10 @@
 	class:fixedh={height != null}
 	style="background: linear-gradient(180deg, {scene.top} 0%, {scene.bottom} 100%);{height != null ? ` height:${height}px;` : ''}"
 >
+	{#if moon}
+		<!-- 캔버스보다 먼저 두어 구름·안개가 달 위로 지나간다 -->
+		<div class="moon" style="width:{moonSize}px;height:{moonSize}px" aria-hidden="true">{@html moon}</div>
+	{/if}
 	<canvas bind:this={canvas} aria-hidden="true"></canvas>
 </div>
 
@@ -520,6 +512,18 @@
 	}
 	.bg.fixedh {
 		bottom: auto;
+	}
+	.moon {
+		position: absolute;
+		right: min(90px, 22%);
+		top: min(80px, 20%);
+		transform: translate(50%, -50%);
+		pointer-events: none;
+	}
+	.moon :global(svg) {
+		display: block;
+		width: 100%;
+		height: 100%;
 	}
 	canvas {
 		position: absolute;
