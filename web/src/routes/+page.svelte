@@ -79,7 +79,7 @@
 		if (!tl) return;
 		selT = tl.slots[i].phase === 'now' ? null : tl.slots[i].t;
 	}
-	// 어제·오늘·내일 표에서 칸을 누르면: 그 칸을 고르고 타임라인을 그쪽으로 넘긴다
+	// 같은 시각 비교 표에서 칸을 누르면: 그 칸을 고르고 타임라인을 그쪽으로 넘긴다
 	function pickSlot(i: number) {
 		selectSlot(i);
 		timeline?.scrollToIndex(i, 0.5);

@@ -1,5 +1,5 @@
 <script lang="ts">
-	// 어제·오늘·내일을 00시부터 3시간 간격으로 한 표에. 세로로 같은 시각이 줄을 맞춰 비교가 쉽다.
+	// 어제·오늘·내일·모레를 00시부터 3시간 간격으로 한 표에. 세로로 같은 시각이 줄을 맞춰 비교가 쉽다.
 	// 칸 바탕은 기온 색(차트·일별 막대와 같은 눈금)을 옅게 깔고, 누르면 타임라인에서 그 칸을 고른다.
 	import { kst, round1 } from '$lib/format';
 	import type { Timeline } from '$lib/types';
@@ -34,11 +34,11 @@
 	}
 
 	const rows = $derived(
-		[-1, 0, 1].map((off) => {
+		[-1, 0, 1, 2].map((off) => {
 			const p = kst(nowMs + off * DAY);
 			return {
 				off,
-				name: ['어제', '오늘', '내일'][off + 1],
+				name: ['어제', '오늘', '내일', '모레'][off + 1],
 				sub: `${p.mo}/${p.d}`,
 				cells: HOURS.map((h) => {
 					const ms = Date.parse(`${p.date}T${String(h).padStart(2, '0')}:00:00+09:00`);
@@ -58,8 +58,8 @@
 	);
 </script>
 
-<section class="cmp" aria-label="어제 오늘 내일 같은 시각 비교">
-	<h2 class="h">어제 · 오늘 · 내일 <small>강수량 / 강수확률 · 풍속 m/s</small></h2>
+<section class="cmp" aria-label="어제부터 모레까지 같은 시각 비교">
+	<h2 class="h">같은 시각 비교</h2>
 	<div class="grid" role="table">
 		<div class="row head" role="row">
 			<span class="lab" role="columnheader"></span>
@@ -117,12 +117,6 @@
 		margin: 20px 20px 8px;
 		font-size: 15px;
 		font-weight: 700;
-	}
-	.h small {
-		margin-left: 6px;
-		font-size: 12px;
-		font-weight: 500;
-		color: var(--text-4);
 	}
 	.grid {
 		margin: 0 12px 0 16px;
