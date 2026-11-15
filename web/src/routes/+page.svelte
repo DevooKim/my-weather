@@ -2,6 +2,7 @@
 	import { app } from '$lib/app.svelte';
 	import { toggleBell } from '$lib/bell';
 	import Daily from '$lib/components/Daily.svelte';
+	import DayCompare from '$lib/components/DayCompare.svelte';
 	import DetailPanel from '$lib/components/DetailPanel.svelte';
 	import Hero from '$lib/components/Hero.svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -77,6 +78,11 @@
 	function selectSlot(i: number) {
 		if (!tl) return;
 		selT = tl.slots[i].phase === 'now' ? null : tl.slots[i].t;
+	}
+	// 어제·오늘·내일 표에서 칸을 누르면: 그 칸을 고르고 타임라인을 그쪽으로 넘긴다
+	function pickSlot(i: number) {
+		selectSlot(i);
+		timeline?.scrollToIndex(i, 0.5);
 	}
 	function toNow() {
 		selT = null;
@@ -233,6 +239,7 @@
 					/>
 					<DetailPanel {tl} idx={shownIdx} onnow={toNow} inline={true} />
 					{@render pendingNote()}
+					<DayCompare {tl} selected={selIdx} onpick={pickSlot} />
 					<Daily {tl} onpick={pickDay} />
 				{/if}
 			</main>
@@ -255,6 +262,7 @@
 			</section>
 			<DetailPanel {tl} idx={selIdx} onnow={toNow} />
 			{@render pendingNote()}
+			<DayCompare {tl} selected={selIdx} onpick={pickSlot} />
 			<Daily {tl} onpick={pickDay} />
 		{/if}
 		<p class="foot">기상청 단기예보 조회서비스</p>

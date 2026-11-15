@@ -294,7 +294,10 @@
 					text-anchor="middle"
 					class="temp"
 					class:pastt={c.i < nowIdx}
-					class:selt={c.i === selected}>{Math.round(c.s.tmp)}°</text
+					class:selt={c.i === selected}
+					><!-- 보이지 않는 °를 앞에 두어 숫자 자체가 칸 가운데(아이콘 아래)에 선다 --><tspan fill-opacity="0"
+						>°</tspan
+					>{Math.round(c.s.tmp)}°</text
 				>
 			{/if}
 			{#if meteo}

@@ -185,9 +185,3 @@ export function airText(a: { grade: number; label: string; text: string } | null
 	return a && a.grade > 0 && a.text ? `${a.label} ${a.text}` : '';
 }
 
-/** 시정 문구: 1km 미만은 m, 그 이상은 km. 안개면 "안개 · 시정 600m" */
-export function visText(f: { vis: number; fog: boolean } | null | undefined) {
-	if (!f || f.vis < 0) return f?.fog ? '안개' : '';
-	const v = f.vis < 1000 ? `${Math.round(f.vis / 10) * 10}m` : `${Math.round(f.vis / 1000)}km`;
-	return f.fog ? `안개 · 시정 ${v}` : `시정 ${v}`;
-}

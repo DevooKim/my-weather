@@ -1,6 +1,11 @@
 <script lang="ts">
-	import { airText, amountText, dayLabel, deg, kst, visText, weatherWord, windText } from '$lib/format';
+	import { airText, amountText, dayLabel, deg, kst, weatherWord, windText } from '$lib/format';
 	import type { Timeline } from '$lib/types';
+	import { iconColor, slotIcon } from '$lib/weather';
+	import Icon from './Icon.svelte';
+
+	// 미세먼지 등급 점 색: 좋음·보통·나쁨·매우나쁨
+	const AIR_COLOR: Record<number, string> = { 1: '#3d8bfd', 2: '#2fa36b', 3: '#e8873a', 4: '#d64545' };
 
 	let {
 		tl,
@@ -20,7 +25,6 @@
 
 	const word = $derived(s ? weatherWord(s) : '');
 	const air = $derived(airText(tl.air));
-	const vis = $derived(visText(tl.fog));
 	const pcp = $derived(s && s.wet ? amountText(s.pcp) : '');
 	const sno = $derived(s && s.sno && s.sno.mm > 0 ? amountText(s.sno, 'cm') : '');
 
@@ -45,6 +49,13 @@
 		if (d === 0) return '어제와 비슷함';
 		return `어제보다 ${Math.abs(d)}° ${d > 0 ? '높음' : '낮음'}`;
 	});
+	const icon = $derived(s ? slotIcon(s, tl.daily) : 'unknown');
+	/** 타일용: 어제 같은 시각과의 차이 */
+	const yDiff = $derived.by(() => {
+		if (!yesterday || !s || s.tmp == null) return ' ';
+		const d = Math.round(s.tmp - yesterday.tmp);
+		return d === 0 ? '비슷함' : `${Math.abs(d)}° ${d > 0 ? '높음' : '낮음'}`;
+	});
 	const popText = $derived(
 		s?.pop != null ? `강수확률 ${s.pop}%` : ''
 	);
@@ -52,18 +63,62 @@
 
 {#if s}
 	{#if inline}
-		<div class="inline" aria-live="polite">
-			<b>{title}</b>
-			<span>{deg(s.tmp)}{s.feels != null && Math.round(s.feels) !== Math.round(s.tmp ?? NaN) ? ` 체감 ${deg(s.feels)}` : ''}</span>
-			{#if word || pcp}<span>{[word, pcp].filter(Boolean).join(' ')}{s.pop != null ? ` · 강수 ${s.pop}%` : ''}</span>{/if}
-			{#if windText(s)}<span>{windText(s)}</span>{/if}
-			{#if s.reh != null}<span>습도 {Math.round(s.reh)}%</span>{/if}
-			{#if sno}<span>적설 {sno}</span>{/if}
-			{#if isNow && air}<span>{air}</span>{/if}
-			{#if isNow && vis}<span>{vis}</span>{/if}
-			{#if yText}<span class="muted">{yText}</span>{/if}
-			{#if !isNow}<button type="button" class="pill" onclick={onnow}>지금으로</button>{/if}
-		</div>
+		<!-- PC: 차트 아래 카드. 머리(시각·기온·날씨) + 같은 자리에 고정된 칸들(마우스로 훑어도 칸이 움직이지 않게) -->
+		<section class="inline" aria-live="polite" aria-label="선택한 칸 자세히">
+			<div class="ihead">
+				<span class="iicon"><Icon name={icon} size={36} color={iconColor(icon)} /></span>
+				<div class="iwhen">
+					<span class="ititle">{title}</span>
+					<div class="inow">
+						<span class="itemp">{deg(s.tmp)}</span>
+						<span class="iword">{[word, pcp].filter(Boolean).join(' ')}</span>
+						{#if s.feels != null && Math.round(s.feels) !== Math.round(s.tmp ?? NaN)}
+							<span class="ifeel">체감 {deg(s.feels)}</span>
+						{/if}
+					</div>
+				</div>
+				<div class="ichips">
+					{#if isNow && tl.air && tl.air.grade > 0}
+						<span class="chip"><i class="dot" style="background:{AIR_COLOR[tl.air.grade] ?? 'var(--text-4)'}"></i>{air}</span>
+					{/if}
+					{#if !isNow}<button type="button" class="pill" onclick={onnow}>지금으로</button>{/if}
+				</div>
+			</div>
+			<div class="tiles">
+				<div class="tile">
+					<span class="tl">강수확률</span>
+					<span class="tv">{s.pop != null ? `${s.pop}%` : '–'}</span>
+					<span class="meter"><span style="width:{s.pop ?? 0}%;background:var(--bar-rain)"></span></span>
+				</div>
+				<div class="tile">
+					<span class="tl">{sno ? '적설' : '강수량'}</span>
+					<span class="tv">{sno || pcp || (s.wet ? '조금' : '없음')}</span>
+					<span class="ts">{s.h === 3 ? '3시간' : '1시간'}</span>
+				</div>
+				<div class="tile">
+					<span class="tl">바람</span>
+					<span class="tv wind">
+						{#if s.vec != null && (s.wsd == null || s.wsd >= 0.5)}
+							<span class="arw" style="transform:rotate({(s.vec + 180) % 360}deg)"
+								><Icon name="arrow" size={16} color="var(--text-2)" /></span
+							>
+						{/if}
+						{s.wsd != null ? (s.wsd < 0.5 ? '고요' : `${Math.round(s.wsd)}m/s`) : windText(s) || '–'}
+					</span>
+					<span class="ts">{s.wsd != null && s.wsd >= 0.5 ? windText(s).split(' ')[0] : ' '}</span>
+				</div>
+				<div class="tile">
+					<span class="tl">습도</span>
+					<span class="tv">{s.reh != null ? `${Math.round(s.reh)}%` : '–'}</span>
+					<span class="meter"><span style="width:{s.reh ?? 0}%;background:var(--text-4)"></span></span>
+				</div>
+				<div class="tile">
+					<span class="tl">어제 이 시각</span>
+					<span class="tv">{yesterday ? deg(yesterday.tmp) : '–'}</span>
+					<span class="ts">{yDiff}</span>
+				</div>
+			</div>
+		</section>
 	{:else}
 		<section class="panel" aria-live="polite" aria-label="선택한 칸 자세히">
 			<div class="head">
@@ -83,7 +138,6 @@
 				{#if s.reh != null}<span>습도 {Math.round(s.reh)}%</span>{/if}
 				{#if sno}<span>적설 {sno}</span>{/if}
 				{#if isNow && air}<span>{air}</span>{/if}
-				{#if isNow && vis}<span>{vis}</span>{/if}
 				{#if isNow && yText}<span>{yText}</span>{/if}
 			</div>
 			{#if !isNow && yText}<div class="note">{yText}</div>{/if}
@@ -180,19 +234,146 @@
 	.pill:active {
 		background: color-mix(in srgb, var(--accent-weak), var(--accent) 22%);
 	}
+	/* PC 차트 아래 카드 */
 	.inline {
 		display: flex;
-		flex-wrap: wrap;
+		flex-direction: column;
+		gap: 14px;
+		margin: 4px 4px 0;
+		padding: 16px;
+		border-radius: 18px;
+		background: linear-gradient(
+			160deg,
+			color-mix(in srgb, var(--sky-bottom, var(--surface-2)) 10%, var(--surface-2)),
+			var(--surface-2) 75%
+		);
+	}
+	.ihead {
+		display: flex;
 		align-items: center;
-		gap: 6px 20px;
-		padding: 10px 12px;
-		border-top: 1px solid var(--line);
-		font-size: 14px;
+		gap: 14px;
+		min-height: 56px;
 	}
-	.inline .pill {
+	.iicon {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 52px;
+		height: 52px;
+		flex: none;
+		border-radius: 16px;
+		background: var(--surface);
+	}
+	.iwhen {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 0;
+	}
+	.ititle {
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--text-3);
+	}
+	.inow {
+		display: flex;
+		align-items: baseline;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+	.itemp {
+		font-size: 30px;
+		font-weight: 700;
+		line-height: 1.1;
+		letter-spacing: -0.5px;
+		font-variant-numeric: tabular-nums;
+	}
+	.iword {
+		font-size: 15px;
+		font-weight: 600;
+	}
+	.ifeel {
+		font-size: 13px;
+		color: var(--text-3);
+	}
+	.ichips {
 		margin-left: auto;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+		justify-content: flex-end;
 	}
-	.muted {
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		height: 30px;
+		padding: 0 12px;
+		border-radius: 15px;
+		background: var(--surface);
+		font-size: 13px;
+		font-weight: 500;
 		color: var(--text-2);
+		white-space: nowrap;
+	}
+	.dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+	}
+	.tiles {
+		display: grid;
+		grid-template-columns: repeat(5, minmax(0, 1fr));
+		gap: 8px;
+	}
+	.tile {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: 10px 12px 12px;
+		border-radius: 14px;
+		background: var(--surface);
+		min-width: 0;
+	}
+	.tl {
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--text-3);
+	}
+	.tv {
+		font-size: 18px;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.tv.wind {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+	.arw {
+		display: inline-flex;
+	}
+	.ts {
+		font-size: 12px;
+		color: var(--text-3);
+		min-height: 6px;
+		white-space: pre;
+	}
+	.meter {
+		height: 4px;
+		margin-top: 2px;
+		border-radius: 2px;
+		background: var(--line);
+		overflow: hidden;
+	}
+	.meter span {
+		display: block;
+		height: 100%;
+		border-radius: 2px;
+		transition: width 0.2s;
 	}
 </style>
