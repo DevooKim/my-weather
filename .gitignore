@@ -21,3 +21,4 @@ collector/
 analysis/
 docs/*
 !docs/wireframes/
+!docs/screenshots/
