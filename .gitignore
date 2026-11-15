@@ -15,3 +15,9 @@ web/node_modules/
 web/build/
 web/.svelte-kit/
 /myweather
+# 비공개로 따로 둔다(공개 레포에 올리지 않음): 운영 구성, 설계·구현 노트, 측정 스크립트
+deploy/
+collector/
+analysis/
+docs/*
+!docs/wireframes/
