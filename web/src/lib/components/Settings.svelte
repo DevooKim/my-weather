@@ -3,6 +3,7 @@
 	import { app } from '$lib/app.svelte';
 	import { hm, kst } from '$lib/format';
 	import { ensureSubscribed, needsInstall } from '$lib/push';
+	import { readTheme, setTheme, type ThemePref } from '$lib/theme';
 	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
 
@@ -15,6 +16,12 @@
 	let enrollRole = $state<'admin' | 'member'>('member');
 	let issued = $state<{ token: string; role: string; expires_at: string } | null>(null);
 	let issuing = $state(false);
+	let theme = $state<ThemePref>('system');
+
+	function pickTheme(p: ThemePref) {
+		theme = p;
+		setTheme(p);
+	}
 
 	async function load() {
 		api.settingsInfo().then((r) => (info = r)).catch(() => (info = null));
@@ -28,6 +35,7 @@
 		}
 	}
 	onMount(() => {
+		theme = readTheme();
 		load();
 		const h = document.querySelector<HTMLElement>('.settings h1');
 		h?.focus();
@@ -234,6 +242,18 @@
 		<section>
 			<h2>보기</h2>
 			<div class="card">
+				<div class="item theme-row">
+					<span class="grow" id="theme-label">화면</span>
+					<div class="seg" role="radiogroup" aria-labelledby="theme-label">
+						<button type="button" role="radio" aria-checked={theme === 'system'} class:on={theme === 'system'} onclick={() => pickTheme('system')}
+							>시스템</button
+						>
+						<button type="button" role="radio" aria-checked={theme === 'light'} class:on={theme === 'light'} onclick={() => pickTheme('light')}
+							>라이트</button
+						>
+						<button type="button" role="radio" aria-checked={theme === 'dark'} class:on={theme === 'dark'} onclick={() => pickTheme('dark')}>다크</button>
+					</div>
+				</div>
 				<button type="button" class="item" onclick={openMotion}>
 					<span class="grow">날씨 모션 보기</span><span class="chev" aria-hidden="true">›</span>
 				</button>
@@ -395,6 +415,33 @@
 	.chev {
 		font-size: 20px;
 		color: var(--text-4);
+	}
+	.theme-row {
+		gap: 12px;
+	}
+	.seg {
+		display: flex;
+		flex-shrink: 0;
+		padding: 3px;
+		border-radius: 10px;
+		background: var(--surface-2);
+		gap: 2px;
+	}
+	.seg button {
+		min-height: 32px;
+		min-width: 52px;
+		padding: 0 10px;
+		border: 0;
+		border-radius: 8px;
+		background: transparent;
+		color: var(--text-3);
+		font: inherit;
+		font-size: 13px;
+	}
+	.seg button.on {
+		background: var(--surface);
+		color: var(--text);
+		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 	}
 	.grow {
 		flex-grow: 1;
