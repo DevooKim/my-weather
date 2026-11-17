@@ -3,8 +3,9 @@
 // 순서:
 //  1. 어제 00시부터 예보 끝까지 시각마다 기록(hour) 하나를 만든다. 기록에는 값 묶음 두 개와 각 출처가 있다.
 //     - 관측 묶음(기온·강수형태·강수량·바람·습도): 지난 시각은 저장된 실황, 없으면 단기예보(estimated).
-//     지금 칸은 최신 실황(정시 실황이 아직 없으면 한 시간 전). 미래는 초단기예보가 덮는 시각이면 초단기,
-//     아니면 단기. 단, 강수형태·강수량은 초단기 발표 +2.5시간까지만 초단기이고 그 뒤는 단기다(Q1).
+//     지금 칸은 최신 실황(정시 실황이 아직 없으면 한 시간 전). 실황이 강수 없음인데 같은 시각
+//     초단기예보가 강수면, 시간 중에 시작된 비로 보고 그 강수를 지금에 얹는다.
+//     미래는 초단기예보가 덮는 시각이면 초단기, 아니면 단기. 단, 강수형태·강수량은 초단기 발표 +2.5시간까지만 초단기이고 그 뒤는 단기다(Q1).
 //     - 하늘 묶음(하늘상태·강수확률·적설·TMN·TMX): 늘 단기예보.
 //     - 단기예보는 시각 t마다 "t를 담고 있는 저장된 발표분 중 가장 늦은 것"을 쓴다. 지난 칸에서는 이것이 직전 발표,
 //     미래 칸에서는 최신 발표분이 된다(설계 §3.2를 한 규칙으로 정리).
@@ -348,6 +349,9 @@ func Build(in Input) *Timeline {
 			} else if vs != nil {
 				h.fillVilage(vs, vm, false)
 			}
+			if um := ultraAt(ult, t); um != nil {
+				h.overlayNowPrecip(ult, um)
+			}
 		default:
 			if um := ultraAt(ult, t); um != nil {
 				h.fillUltra(ult, um, vs, vm)
@@ -471,6 +475,35 @@ func (h *hour) fillNcst(m map[string]string) {
 		}
 	}
 	h.obsSrc, h.pcpSrc = "n", "n"
+}
+
+// overlayNowPrecip: 정시 실황은 그 시각 한 점이다. 그 뒤에 비가 시작해도 다음 시 실황(약 1시간)까지
+// 강수 없음으로 남는다. 같은 시각 초단기예보가 강수면 지금 강수로 쓴다. 빗방울도 실황처럼 보이게 한다.
+func (h *hour) overlayNowPrecip(u *fsrc, m map[string]string) {
+	if u == nil || h.t.After(u.base.Add(UltraPrecipLead)) {
+		return
+	}
+	// 실황·단기 강수는 그대로. 초단기 빗방울(5·6·7)만 지금 칸에서는 실황처럼 보이게 한다.
+	if h.pty > 0 && !(h.ptyKind == KindUltra && h.pty >= 5) {
+		return
+	}
+	if h.pty <= 0 {
+		p := pi(m, "PTY")
+		if p == nil || *p == 0 {
+			return
+		}
+		h.pty = *p
+		h.pcp = nil
+		if v, ok := m["RN1"]; ok {
+			if a, err := value.ParsePCP(v, false); err == nil {
+				h.pcp = &a
+			}
+		}
+		h.pcpSrc = u.key
+	}
+	if h.pty >= 5 {
+		h.ptyKind = KindNcst
+	}
 }
 
 func (h *hour) fillVilage(s *fsrc, m map[string]string, estimated bool) {

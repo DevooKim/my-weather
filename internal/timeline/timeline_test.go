@@ -273,6 +273,33 @@ func TestSourcesUltraPrecipCutoff(t *testing.T) {
 	}
 }
 
+func TestNowUsesUltraWhenObsDry(t *testing.T) {
+	now := at("2026-11-17 17:39")
+	in := favInput(now)
+	in.Obs[kst.ToInt(at("2026-11-17 17:00"))] = obsAt(at("2026-11-17 17:00"), 13.6, "0")
+	in.Ultra = []Fcst{ultra(at("2026-11-17 16:30"), func(t time.Time, c string) string {
+		if t.Hour() == 17 || t.Hour() == 18 {
+			switch c {
+			case "PTY":
+				return "5"
+			case "RN1":
+				return "1mm 미만"
+			}
+		}
+		return ""
+	})}
+	tl := Build(in)
+	s := slotAt(t, tl, "2026-11-17 17:00")
+	if !s.Wet || s.Pty == nil || *s.Pty != "drizzle" || s.Src.Obs != "n" || s.Src.Pcp != "u1" || s.Tmp == nil || *s.Tmp != 13.6 {
+		t.Fatalf("now should follow ultra precip: %+v", s)
+	}
+	// 미래 칸의 빗방울은 그대로 비가 아니다(Q1)
+	fut := slotAt(t, tl, "2026-11-17 18:00")
+	if fut.Wet || fut.Pty == nil || *fut.Pty != "drizzle" {
+		t.Fatalf("future drizzle: wet=%v pty=%v", fut.Wet, fut.Pty)
+	}
+}
+
 func TestUltraDrizzleNotRain(t *testing.T) {
 	now := at("2026-11-10 14:50")
 	in := favInput(now)
