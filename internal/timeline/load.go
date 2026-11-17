@@ -12,7 +12,7 @@ import (
 //
 //   - 단기: base가 [어제 00시 − 28시간, now]인 발표분(각 최고 ver)의 값 중 어제 00시 이후 것.
 //     어제 00시를 담는 그저께 23시·20시 발표분까지 들어간다.
-//   - 초단기: 가장 늦은 발표분 하나(지금 −7시간 이내).
+//   - 초단기: 가장 늦은 발표분과 그 직전 발표분(지금 −7시간 이내). 직전 분은 지금 시각을 최신 분이 덮지 못할 때 강수 보정에 쓴다.
 //   - 실황: 어제 00시 ~ 지금.
 func Load(ctx context.Context, db *store.DB, place Place, now time.Time) (Input, error) {
 	now = now.In(kst.Loc)
@@ -33,7 +33,11 @@ func Load(ctx context.Context, db *store.DB, place Place, now time.Time) (Input,
 		return in, err
 	}
 	if ub > 0 && !kst.FromInt(ub).Before(now.Add(-7*time.Hour)) {
-		us, err := db.FcstRange(ctx, "ultra", nx, ny, ub, ub, 0)
+		from := kst.ToInt(kst.Ultra.Prev(kst.FromInt(ub)))
+		if kst.FromInt(from).Before(now.Add(-7 * time.Hour)) {
+			from = ub
+		}
+		us, err := db.FcstRange(ctx, "ultra", nx, ny, from, ub, 0)
 		if err != nil {
 			return in, err
 		}

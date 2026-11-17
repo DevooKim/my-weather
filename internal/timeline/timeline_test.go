@@ -277,20 +277,29 @@ func TestNowUsesUltraWhenObsDry(t *testing.T) {
 	now := at("2026-11-17 17:39")
 	in := favInput(now)
 	in.Obs[kst.ToInt(at("2026-11-17 17:00"))] = obsAt(at("2026-11-17 17:00"), 13.6, "0")
-	in.Ultra = []Fcst{ultra(at("2026-11-17 16:30"), func(t time.Time, c string) string {
-		if t.Hour() == 17 || t.Hour() == 18 {
-			switch c {
-			case "PTY":
+	// 17:30 발표분은 18시부터라 17시를 안 담는다. 17시 강수는 16:30 발표분에 있다.
+	in.Ultra = []Fcst{
+		ultra(at("2026-11-17 17:30"), func(t time.Time, c string) string {
+			if t.Hour() == 18 && c == "PTY" {
 				return "5"
-			case "RN1":
-				return "1mm 미만"
 			}
-		}
-		return ""
-	})}
+			return ""
+		}),
+		ultra(at("2026-11-17 16:30"), func(t time.Time, c string) string {
+			if t.Hour() == 17 || t.Hour() == 18 {
+				switch c {
+				case "PTY":
+					return "5"
+				case "RN1":
+					return "1mm 미만"
+				}
+			}
+			return ""
+		}),
+	}
 	tl := Build(in)
 	s := slotAt(t, tl, "2026-11-17 17:00")
-	if !s.Wet || s.Pty == nil || *s.Pty != "drizzle" || s.Src.Obs != "n" || s.Src.Pcp != "u1" || s.Tmp == nil || *s.Tmp != 13.6 {
+	if !s.Wet || s.Pty == nil || *s.Pty != "drizzle" || s.Src.Obs != "n" || s.Src.Pcp != "up1" || s.Tmp == nil || *s.Tmp != 13.6 {
 		t.Fatalf("now should follow ultra precip: %+v", s)
 	}
 	// 미래 칸의 빗방울은 그대로 비가 아니다(Q1)

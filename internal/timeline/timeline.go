@@ -284,17 +284,23 @@ func Build(in Input) *Timeline {
 			s.key = fmt.Sprintf("vp%d", i)
 		}
 	}
-	var ult *fsrc
+	var ults []*fsrc
 	for _, f := range in.Ultra {
-		if len(f.Rows) == 0 {
-			continue
-		}
-		if ult == nil || f.Base.After(ult.base) {
-			ult = newFsrc(KindUltra, f)
+		if len(f.Rows) > 0 {
+			ults = append(ults, newFsrc(KindUltra, f))
 		}
 	}
-	if ult != nil {
-		ult.key = "u1"
+	sort.Slice(ults, func(i, j int) bool { return ults[i].base.After(ults[j].base) })
+	for i, s := range ults {
+		if i == 0 {
+			s.key = "u1"
+		} else {
+			s.key = fmt.Sprintf("up%d", i)
+		}
+	}
+	var ult *fsrc
+	if len(ults) > 0 {
+		ult = ults[0]
 	}
 
 	end := todayLast
@@ -349,8 +355,9 @@ func Build(in Input) *Timeline {
 			} else if vs != nil {
 				h.fillVilage(vs, vm, false)
 			}
-			if um := ultraAt(ult, t); um != nil {
-				h.overlayNowPrecip(ult, um)
+			// 최신 초단기는 다음 시부터라 지금 시각이 없을 수 있다. 그 시각을 담은 가장 늦은 발표분을 쓴다.
+			if u, um := ultraCovering(ults, t); um != nil {
+				h.overlayNowPrecip(u, um)
 			}
 		default:
 			if um := ultraAt(ult, t); um != nil {
@@ -408,13 +415,17 @@ func Build(in Input) *Timeline {
 		}
 		tl.Sources[s.key] = src
 	}
-	if ult != nil && used[ult.key] {
-		b := ult.base
+	expU := kst.Ultra.Latest(now.Add(-DelayGrace))
+	for i, s := range ults {
+		if !used[s.key] {
+			continue
+		}
+		b := s.base
 		src := Source{Kind: KindUltra, Label: "초단기예보", Base: &b}
-		if expU := kst.Ultra.Latest(now.Add(-DelayGrace)); ult.base.Before(expU) {
+		if i == 0 && s.base.Before(expU) {
 			src.Delayed = &Delayed{ExpectedBase: expU}
 		}
-		tl.Sources[ult.key] = src
+		tl.Sources[s.key] = src
 	}
 	if len(vil) == 0 {
 		tl.Warnings = append(tl.Warnings, "no_vilage")
@@ -462,6 +473,16 @@ func ultraAt(u *fsrc, t time.Time) map[string]string {
 		return nil
 	}
 	return u.get(t)
+}
+
+// ultraCovering은 t를 담은 초단기 발표분 중 가장 늦은 것이다. ults는 base 내림차순.
+func ultraCovering(ults []*fsrc, t time.Time) (*fsrc, map[string]string) {
+	for _, u := range ults {
+		if m := ultraAt(u, t); m != nil {
+			return u, m
+		}
+	}
+	return nil, nil
 }
 
 func (h *hour) fillNcst(m map[string]string) {
